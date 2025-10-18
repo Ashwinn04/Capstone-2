@@ -10,8 +10,8 @@ import lime.lime_tabular
 import torch
 import torch.nn as nn
 from captum.attr import IntegratedGradients, GradientShap, Saliency
-import matplotlib.pyplot as plt
-import seaborn as sns
+# import matplotlib.pyplot as plt
+# import seaborn as sns
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
@@ -255,9 +255,9 @@ class SepsisExplainer:
     
     def create_feature_importance_plot(self, explanations: Dict[str, Any], 
                                      method: str = 'shap', 
-                                     top_k: int = 10) -> plt.Figure:
+                                     top_k: int = 10):
         """
-        Create feature importance visualization
+        Create feature importance visualization using Plotly
         
         Args:
             explanations: Dictionary with explanations
@@ -265,18 +265,20 @@ class SepsisExplainer:
             top_k: Number of top features to show
             
         Returns:
-            Matplotlib figure
+            Plotly figure
         """
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
         if method == 'shap' and 'shap' in explanations:
             if 'error' not in explanations['shap']:
                 df = explanations['shap']['feature_importance'].head(top_k)
-                ax.barh(range(len(df)), df['importance'])
-                ax.set_yticks(range(len(df)))
-                ax.set_yticklabels(df['feature'])
-                ax.set_xlabel('SHAP Importance')
-                ax.set_title('Top Features by SHAP Importance')
+                fig = px.bar(
+                    df, 
+                    x='importance', 
+                    y='feature',
+                    orientation='h',
+                    title='Top Features by SHAP Importance',
+                    labels={'importance': 'SHAP Value', 'feature': 'Feature'}
+                )
+                return fig
         
         elif method == 'lime' and 'lime' in explanations:
             # Aggregate LIME explanations across samples
@@ -293,31 +295,38 @@ class SepsisExplainer:
             sorted_features = sorted(avg_importance.items(), key=lambda x: x[1], reverse=True)[:top_k]
             
             features, importances = zip(*sorted_features)
-            ax.barh(range(len(features)), importances)
-            ax.set_yticks(range(len(features)))
-            ax.set_yticklabels(features)
-            ax.set_xlabel('LIME Importance')
-            ax.set_title('Top Features by LIME Importance')
+            fig = px.bar(
+                x=importances,
+                y=features,
+                orientation='h',
+                title='Top Features by LIME Importance',
+                labels={'x': 'LIME Weight', 'y': 'Feature'}
+            )
+            return fig
         
-        plt.tight_layout()
-        return fig
+        return None
     
     def create_waterfall_plot(self, explanations: Dict[str, Any], 
-                            sample_idx: int = 0) -> plt.Figure:
+                            sample_idx: int = 0):
         """
-        Create SHAP waterfall plot for a single sample
+        Create SHAP waterfall plot for a single sample using Plotly
         
         Args:
             explanations: Dictionary with explanations
             sample_idx: Index of sample to explain
             
         Returns:
-            Matplotlib figure
+            Plotly figure
         """
         if 'shap' not in explanations or 'error' in explanations['shap']:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.text(0.5, 0.5, 'SHAP waterfall plot not available', 
-                   ha='center', va='center', transform=ax.transAxes)
+            fig = go.Figure()
+            fig.add_annotation(
+                text="SHAP waterfall plot not available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16)
+            )
+            fig.update_layout(title="SHAP Waterfall Plot")
             return fig
         
         shap_values = explanations['shap']['shap_values']
@@ -332,32 +341,25 @@ class SepsisExplainer:
         # Sort features by absolute SHAP value
         feature_order = np.argsort(np.abs(sample_shap))[::-1]
         
-        fig, ax = plt.subplots(figsize=(12, 8))
+        # Create waterfall plot using Plotly
+        features = [self.feature_names[i] for i in feature_order]
+        values = sample_shap[feature_order]
         
-        # Create waterfall plot
-        cumulative = base_value
-        colors = ['red' if x < 0 else 'blue' for x in sample_shap[feature_order]]
+        fig = go.Figure(go.Waterfall(
+            name="SHAP Values",
+            orientation="v",
+            measure=["relative"] * len(features),
+            x=features,
+            y=values,
+            connector={"line":{"color":"rgb(63, 63, 63)"}},
+        ))
         
-        for i, idx in enumerate(feature_order):
-            feature_name = self.feature_names[idx]
-            shap_val = sample_shap[idx]
-            
-            ax.barh(i, shap_val, left=cumulative, color=colors[i], alpha=0.7)
-            ax.text(cumulative + shap_val/2, i, f'{feature_name}\n{shap_val:.3f}', 
-                   ha='center', va='center', fontsize=8)
-            
-            cumulative += shap_val
+        fig.update_layout(
+            title=f"SHAP Waterfall Plot (Sample {sample_idx})",
+            showlegend=False,
+            height=600
+        )
         
-        ax.axvline(x=base_value, color='black', linestyle='--', alpha=0.7, label='Base Value')
-        ax.axvline(x=cumulative, color='green', linestyle='-', alpha=0.7, label='Final Prediction')
-        
-        ax.set_yticks(range(len(feature_order)))
-        ax.set_yticklabels([self.feature_names[i] for i in feature_order])
-        ax.set_xlabel('SHAP Value')
-        ax.set_title(f'SHAP Waterfall Plot - Sample {sample_idx}')
-        ax.legend()
-        
-        plt.tight_layout()
         return fig
 
 

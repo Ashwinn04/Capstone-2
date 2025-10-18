@@ -697,7 +697,7 @@ def show_dynamic_explainability(patient_data):
                    'lactate', 'wbc', 'creatinine', 'age']
     
     # Generate dynamic explainability
-    from utils.explainability import get_dynamic_explainability
+    from explainability_utils.explainability import get_dynamic_explainability
     dynamic_data = get_dynamic_explainability(patient_data, feature_names, 24)
     
     if 'error' in dynamic_data:
@@ -737,7 +737,7 @@ def show_dynamic_explainability(patient_data):
     
     # Case narrative
     st.subheader("📝 Case Narrative")
-    from utils.explainability import generate_case_narrative
+    from explainability_utils.explainability import generate_case_narrative
     
     # Simulate predictions and feature importance
     predictions = {'risk_score': 0.65, 'risk_level': 'medium'}
