@@ -1,0 +1,129 @@
+{
+  "patient_data": {
+    "patient_id": "P001",
+    "admission_time": "2024-01-15T08:00:00Z",
+    "current_time": "2024-01-15T14:00:00Z",
+    "vital_signs": {
+      "heart_rate": 95,
+      "blood_pressure_systolic": 120,
+      "blood_pressure_diastolic": 80,
+      "temperature": 37.2,
+      "respiratory_rate": 18,
+      "oxygen_saturation": 98
+    },
+    "lab_values": {
+      "white_blood_cells": 8.5,
+      "lactate": 1.2,
+      "creatinine": 0.9,
+      "bilirubin": 0.8
+    },
+    "clinical_scores": {
+      "sirs_score": 2,
+      "qsofa_score": 0,
+      "sofa_score": 3
+    }
+  },
+  "model_predictions": {
+    "grud": {
+      "risk_score": 0.65,
+      "risk_level": "Medium",
+      "confidence": 0.78,
+      "attention_weights": [
+        0.1,
+        0.2,
+        0.15,
+        0.25,
+        0.3
+      ]
+    },
+    "lstm": {
+      "risk_score": 0.58,
+      "risk_level": "Medium",
+      "confidence": 0.72,
+      "attention_weights": [
+        0.12,
+        0.18,
+        0.22,
+        0.28,
+        0.2
+      ]
+    },
+    "cnn_lstm": {
+      "risk_score": 0.71,
+      "risk_level": "High",
+      "confidence": 0.81,
+      "attention_weights": [
+        0.08,
+        0.15,
+        0.25,
+        0.32,
+        0.2
+      ]
+    },
+    "transformer": {
+      "risk_score": 0.63,
+      "risk_level": "Medium",
+      "confidence": 0.75,
+      "attention_weights": [
+        0.1,
+        0.2,
+        0.2,
+        0.3,
+        0.2
+      ]
+    }
+  },
+  "ensemble_prediction": {
+    "average_risk_score": 0.64,
+    "risk_level": "Medium",
+    "agreement_score": 0.85,
+    "recommended_action": "Monitor closely"
+  },
+  "risk_trajectory": [
+    {
+      "timestamp": "2024-01-15T08:00:00Z",
+      "risk_score": 0.45
+    },
+    {
+      "timestamp": "2024-01-15T10:00:00Z",
+      "risk_score": 0.52
+    },
+    {
+      "timestamp": "2024-01-15T12:00:00Z",
+      "risk_score": 0.58
+    },
+    {
+      "timestamp": "2024-01-15T14:00:00Z",
+      "risk_score": 0.64
+    }
+  ],
+  "feature_importance": {
+    "top_features": [
+      {
+        "feature": "lactate",
+        "importance": 0.25,
+        "trend": "increasing"
+      },
+      {
+        "feature": "heart_rate",
+        "importance": 0.2,
+        "trend": "stable"
+      },
+      {
+        "feature": "temperature",
+        "importance": 0.18,
+        "trend": "increasing"
+      },
+      {
+        "feature": "white_blood_cells",
+        "importance": 0.15,
+        "trend": "increasing"
+      },
+      {
+        "feature": "respiratory_rate",
+        "importance": 0.12,
+        "trend": "stable"
+      }
+    ]
+  }
+}

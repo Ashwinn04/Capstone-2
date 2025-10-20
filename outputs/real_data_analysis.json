@@ -1,0 +1,84 @@
+{
+  "dataset_analysis": {
+    "total_records": 546123,
+    "total_patients": 14057,
+    "sepsis_cases": 11850,
+    "sepsis_rate": 0.021698408600260382,
+    "time_range_hours": 335,
+    "features_count": 44,
+    "missing_data_percent": 0.0
+  },
+  "model_performance": {
+    "GRU-D": {
+      "auroc": 0.49790553405810456,
+      "auprc": 0.018658226661531725,
+      "sensitivity_at_80_specificity": 0.16417910447761194
+    },
+    "LSTM": {
+      "auroc": 0.4283193088057654,
+      "auprc": 0.015739311385991564,
+      "sensitivity_at_80_specificity": 0.13432835820895522
+    },
+    "CNN-LSTM": {
+      "auroc": 0.40773089286079883,
+      "auprc": 0.015019383288169616,
+      "sensitivity_at_80_specificity": 0.13432835820895522
+    },
+    "Transformer": {
+      "auroc": 0.5617099686751428,
+      "auprc": 0.021648222682427075,
+      "sensitivity_at_80_specificity": 0.2835820895522388
+    }
+  },
+  "feature_categories": {
+    "vital_signs": [
+      "HR",
+      "O2Sat",
+      "Temp",
+      "SBP",
+      "MAP",
+      "DBP",
+      "Resp"
+    ],
+    "lab_values": [
+      "BaseExcess",
+      "HCO3",
+      "FiO2",
+      "pH",
+      "PaCO2",
+      "SaO2",
+      "AST",
+      "BUN",
+      "Alkalinephos",
+      "Calcium",
+      "Chloride",
+      "Creatinine",
+      "Bilirubin_direct",
+      "Glucose",
+      "Lactate",
+      "Magnesium",
+      "Phosphate",
+      "Potassium",
+      "Bilirubin_total",
+      "TroponinI",
+      "Hct",
+      "Hgb",
+      "PTT",
+      "WBC",
+      "Fibrinogen",
+      "Platelets",
+      "MAP_rolling_mean_6hr",
+      "MAP_delta_1hr"
+    ],
+    "clinical_scores": [
+      "qSOFA_Resp",
+      "qSOFA_MAP",
+      "qSOFA_Score_simple"
+    ],
+    "demographics": [
+      "Age",
+      "Gender"
+    ]
+  },
+  "analysis_timestamp": "2025-10-14T10:42:38.212415"
+}
