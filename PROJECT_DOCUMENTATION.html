@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROJECT_DOCUMENTATION — Sepsis Digital Twin (Capstone)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #60a5fa;
+      --accent-2: #34d399;
+      --warn: #f59e0b;
+      --danger: #f87171;
+      --code-bg: #0b1220;
+      --code-border: #1f2937;
+    }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { position: sticky; top: 0; z-index: 10; background: linear-gradient(180deg, rgba(17,24,39,.95), rgba(17,24,39,.85)); backdrop-filter: blur(8px); border-bottom: 1px solid #1f2937; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 16px 20px; }
+    .title { font-size: 26px; font-weight: 800; letter-spacing: 0.2px; }
+    .subtitle { color: var(--muted); margin-top: 4px; }
+    .topbar { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .search { flex: 1 1 280px; display: flex; }
+    .search input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #253043; background: #0b1220; color: var(--text); outline: none; }
+    .toc { background: var(--panel); border: 1px solid #1f2937; border-radius: 10px; padding: 14px; }
+    .toc h2 { margin: 0 0 10px; font-size: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .toc ul { list-style: none; padding: 0; margin: 0; columns: 2; column-gap: 28px; }
+    .toc li { margin: 6px 0; break-inside: avoid; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #1f2937; background: #101827; color: var(--muted); }
+    .section { margin: 22px 0; }
+    .section details { background: var(--panel); border: 1px solid #1f2937; border-radius: 12px; }
+    .section summary { cursor: pointer; padding: 14px 16px; font-weight: 700; }
+    .section .content { padding: 6px 16px 16px 16px; border-top: 1px solid #1f2937; }
+    .pill { display: inline-block; background: #0b1220; color: var(--accent-2); border: 1px solid #1f2937; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+    h1 { font-size: 26px; margin: 14px 0; }
+    h2 { font-size: 20px; margin: 14px 0 8px; }
+    h3 { font-size: 16px; margin: 12px 0 6px; }
+    p, li { line-height: 1.6; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    pre { position: relative; background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 10px; padding: 12px; overflow: auto; }
+    pre .copy { position: absolute; top: 8px; right: 8px; background: #0f172a; color: var(--muted); border: 1px solid #334155; border-radius: 6px; font-size: 12px; padding: 4px 8px; cursor: pointer; }
+    pre .copy:hover { color: var(--text); border-color: #4b5563; }
+    pre code { color: #e5e7eb; font-size: 13px; }
+    .kw { color: #93c5fd; }
+    .fn { color: #34d399; }
+    .st { color: #fbbf24; }
+    .cm { color: #9ca3af; font-style: italic; }
+    .nu { color: #fdba74; }
+    .hl { background: rgba(96,165,250,.08); padding: 0 3px; border-radius: 4px; }
+    .callout { border-left: 3px solid var(--accent); background: #0b1220; padding: 10px 12px; border-radius: 8px; }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #111827; border: 1px solid #1f2937; padding: 2px 6px; border-radius: 6px; }
+    .warn { color: var(--warn); }
+    .danger { color: var(--danger); }
+    footer { color: var(--muted); border-top: 1px solid #1f2937; margin-top: 24px; padding-top: 12px; font-size: 12px; }
+  </style>
+  <script>
+    function setupCopyButtons(){
+      document.querySelectorAll('pre').forEach(function(pre){
+        const btn=document.createElement('button');
+        btn.className='copy'; btn.innerText='Copy';
+        btn.addEventListener('click', function(){
+          const text = pre.querySelector('code')?.innerText || '';
+          navigator.clipboard.writeText(text).then(()=>{ btn.innerText='Copied!'; setTimeout(()=>btn.innerText='Copy',1200); });
+        });
+        pre.appendChild(btn);
+      });
+    }
+    function escapeHtml(str){return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    function highlightBlock(block){
+      const lang = block.getAttribute('data-lang') || '';
+      let src = block.textContent;
+      src = escapeHtml(src);
+      if(lang==='python'){
+        const kw = /(\bdef\b|\bclass\b|\breturn\b|\bimport\b|\bfrom\b|\bas\b|\bif\b|\belif\b|\belse\b|\bfor\b|\bwhile\b|\btry\b|\bexcept\b|\braise\b|\bwith\b|\basync\b|\bawait\b|\bNone\b|\bTrue\b|\bFalse\b)/g;
+        const fn = /(\b[A-Za-z_][A-Za-z0-9_]*)(?=\s*\()/g;
+        const st = /(\"[^\"]*\"|'[^']*')/g;
+        const cm = /(#[^\n]*)/g;
+        const nu = /\b(\d+\.?\d*|0x[0-9a-fA-F]+)\b/g;
+        src = src.replace(st,'<span class="st">$1<\/span>')
+                 .replace(cm,'<span class="cm">$1<\/span>')
+                 .replace(kw,'<span class="kw">$1<\/span>')
+                 .replace(nu,'<span class="nu">$1<\/span>')
+                 .replace(fn,'<span class="fn">$1<\/span>');
+      } else if(lang==='bash'){ src = src; }
+      else if(lang==='yaml' || lang==='yml' || lang==='json'){ src = src.replace(/("[^"]*"\s*:)/g,'<span class="kw">$1<\/span>'); }
+      block.innerHTML = src;
+    }
+    function highlightAll(){ document.querySelectorAll('pre code').forEach(highlightBlock); }
+    function setupSearch(){
+      const input = document.getElementById('doc-search');
+      input.addEventListener('input', function(){
+        const q = input.value.trim().toLowerCase();
+        document.querySelectorAll('.doc-section').forEach(function(sec){
+          const text = sec.textContent.toLowerCase();
+          sec.style.display = !q || text.includes(q) ? '' : 'none';
+        });
+      });
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+      setupCopyButtons();
+      highlightAll();
+      setupSearch();
+    });
+  </script>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="title">Sepsis Digital Twin — Full-Stack Capstone Documentation</div>
+      <div class="subtitle">FastAPI microservice + Streamlit dashboard + ML/DL + Explainability • Single-file docs</div>
+      <div class="topbar">
+        <div class="search"><input id="doc-search" placeholder="Search anything (commands, files, errors, sections)…" aria-label="Search documentation"></div>
+        <span class="badge">Generated: <span id="gen-date"></span></span>
+        <span class="badge">Target: Beginner-friendly</span>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <div class="toc section">
+      <h2>Table of Contents</h2>
+      <ul>
+        <li><a href="#overview">1) Project Overview</a></li>
+        <li><a href="#quick-start">2) Quick Start Guide</a></li>
+        <li><a href="#architecture">3) Architecture Overview</a></li>
+        <li><a href="#file-map">4) Folder and File Map</a></li>
+        <li><a href="#key-modules">5) Key Modules / Components</a></li>
+        <li><a href="#api-docs">6) API Documentation</a></li>
+        <li><a href="#frontend">7) Frontend Summary</a></li>
+        <li><a href="#database">8) Database / Persistence</a></li>
+        <li><a href="#testing">9) Testing & CI/CD</a></li>
+        <li><a href="#deployment">10) Deployment Guide</a></li>
+        <li><a href="#security">11) Security & Performance Notes</a></li>
+        <li><a href="#contribute">12) How to Extend / Contribute</a></li>
+        <li><a href="#demo">13) Demo & Review Preparation</a></li>
+        <li><a href="#todos">14) Outstanding TODOs / Known Issues</a></li>
+        <li><a href="#glossary">15) Glossary / Reference</a></li>
+        <li><a href="#impact">16) Novelty & Societal Impact</a></li>
+        <li><a href="#perf-ops">17) Performance & Ops Tuning</a></li>
+        <li><a href="#runbook">18) Deployment Runbook</a></li>
+        <li><a href="#faq">19) FAQ</a></li>
+        <li><a href="#professor-qa">20) Professor Q&A</a></li>
+        <li><a href="#visuals">21) Visual Gallery</a></li>
+      </ul>
+    </div>
+    <section id="overview" class="section doc-section">
+      <details open>
+        <summary>1) Project Overview</summary>
+        <div class="content">
+          <h2>Project Name</h2>
+          <p><strong>Sepsis Digital Twin — Deep Learning, Explainability, and Clinical Dashboard</strong></p>
+          <h3>Elevator Pitch</h3>
+          <p>A production-style clinical AI that predicts sepsis risk 4–6 hours before onset, explains why, and presents actionable guidance to clinicians via a real-time dashboard and a REST API.</p>
+          <p>It integrates deep learning and classical models, evaluation metrics, and explainability into a cohesive, demo-ready system.</p>
+          <h3>Tech Stack</h3>
+          <ul>
+            <li><strong>Languages</strong>: Python 3.11 (Dockerfile), Python 3.8+ compatible</li>
+            <li><strong>Backend</strong>: FastAPI, Uvicorn</li>
+            <li><strong>Frontend</strong>: Streamlit (interactive dashboard)</li>
+            <li><strong>ML/DL</strong>: PyTorch, scikit-learn, NumPy, pandas</li>
+            <li><strong>Explainability</strong>: SHAP, LIME, Captum</li>
+            <li><strong>Visualization</strong>: Plotly, Matplotlib, Seaborn</li>
+            <li><strong>Packaging/Infra</strong>: Docker, Docker Compose</li>
+          </ul>
+          <h3>Purpose and Key Features</h3>
+          <ul>
+            <li>Early sepsis risk prediction (4–6h horizon) with ensemble of 7 models</li>
+            <li>Interactive Streamlit dashboard with 9+ tabs, dynamic explainability, and export tools</li>
+            <li>FastAPI microservice with endpoints for prediction, batch, explainability, health, and model status</li>
+            <li>Rich evaluation and clinical scoring (SIRS, qSOFA, SOFA), plus lead-time and timeliness metrics</li>
+            <li>Dockerized deployment paths: API-only, dashboard-only, or complete system</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="quick-start" class="section doc-section">
+      <details open>
+        <summary>2) Quick Start Guide</summary>
+        <div class="content">
+          <div class="callout"><strong>Recommended</strong>: Use Docker Compose to start the complete system quickly.</div>
+          <h3>Prerequisites</h3>
+          <ul>
+            <li><strong>OS</strong>: macOS, Linux, or Windows</li>
+            <li><strong>Docker</strong>: 24+ and Docker Compose</li>
+            <li><strong>Python</strong>: 3.11 (Docker base) or 3.8+ (local)</li>
+            <li><strong>Optional</strong>: GPU for faster DL training (CPU works)</li>
+          </ul>
+          <h3>Installation</h3>
+          <pre><code data-lang="bash"># Clone (already present in your workspace
+cd /Users/admin/Downloads/Capstone-2-ash
+
+# Install Python deps (local dev)
+pip install -r requirements.txt
+
+# Launch Jupyter (optional notebooks)
+jupyter notebook notebooks/
+</code></pre>
+          <h3>Environment Variables</h3>
+          <pre><code data-lang="bash"># .env (sample)
+PYTHONPATH=.
+LOG_LEVEL=info
+MODE=complete   # api | dashboard | complete (for Docker "complete" stage)
+PORT_API=8000
+PORT_DASHBOARD=8501
+</code></pre>
+          <h3>Run (Development)</h3>
+          <pre><code data-lang="bash"># Start dashboard (Streamlit)
+streamlit run dashboard_real.py
+
+# Start API (FastAPI via Uvicorn)
+python api_service.py
+
+# Access
+# Dashboard: http://localhost:8501
+# API Docs:  http://localhost:8000/docs
+</code></pre>
+          <h3>Run (Docker Compose - Complete System)</h3>
+          <pre><code data-lang="bash">docker-compose up -d
+# Dashboard: http://localhost:8501
+# API:       http://localhost:8000
+# API Docs:  http://localhost:8000/docs
+</code></pre>
+          <h3>Run (Docker Targets)</h3>
+          <pre><code data-lang="bash"># API only
+docker build --target production -t sepsis-api .
+docker run -p 8000:8000 sepsis-api
+
+# Dashboard only
+docker build --target dashboard -t sepsis-dashboard .
+docker run -p 8501:8501 sepsis-dashboard
+</code></pre>
+          <h3>Common Troubleshooting</h3>
+          <ul>
+            <li><strong>Dataset missing</strong>: <span class="kbd">Dataset.csv</span> required by dashboard; demo still runs with sample data but fewer features.</li>
+            <li><strong>Ports busy</strong>: Change to <span class="kbd">-p 8001:8000</span> or <span class="kbd">-p 8502:8501</span>.</li>
+            <li><strong>SHAP/Captum heavy</strong>: Some environments need extra build tools; Docker image installs <span class="kbd">build-essential</span>.</li>
+            <li><strong>Mac ARM + Torch</strong>: Use CPU wheels (already implied by requirements) or conda-forge if needed.</li>
+            <li><strong>Absolute paths</strong>: Backend/dashboard add an absolute <span class="kbd">project_root</span>; see Known Issues for the fix.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="architecture" class="section doc-section">
+      <details open>
+        <summary>3) Architecture Overview</summary>
+        <div class="content">
+          <h3>Diagram</h3>
+          <pre><code>┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│  Streamlit    │ ↔  │   FastAPI     │ ↔  │   Models       │
+│  Dashboard    │    │  Microservice │    │ (7 models)     │
+└───────────────┘    └───────────────┘    └───────────────┘
+        │                   │                     │
+        ▼                   ▼                     ▼
+┌───────────────┐   ┌───────────────┐     ┌───────────────┐
+│  Real Data    │   │ Explainability │     │ Clinical       │
+│ (Dataset.csv) │   │  (SHAP/LIME)   │     │ Scores (SIRS…) │
+└───────────────┘   └───────────────┘     └───────────────┘
+</code></pre>
+          <h3>Components</h3>
+          <ul>
+            <li><strong>Frontend</strong>: Streamlit app (`dashboard_real.py`) renders risk, explanations, trajectories, fairness, and exports.</li>
+            <li><strong>Backend</strong>: FastAPI app (`api_service.py`) offers endpoints for predictions, explanations, model status, and health.</li>
+            <li><strong>ML/DL Layer</strong>: Classical ML in `integration_real.py` and simulated DL; training/evaluation utilities under `explainability_utils/`.</li>
+            <li><strong>Explainability</strong>: SHAP/LIME/Captum utilities in `explainability_utils/explainability.py`.</li>
+            <li><strong>Infra</strong>: Multi-stage `Dockerfile` and `docker-compose.yml` orchestrate API, dashboard, and optional Redis/Postgres/Nginx.</li>
+          </ul>
+          <h3>Data Flow</h3>
+          <ol>
+            <li>Input data (real or sample) is loaded in the dashboard and/or posted to API.</li>
+            <li>Clinical scores and model predictions are computed (baseline + simulated DL + ensemble).</li>
+            <li>Explainability and narratives are generated to justify risk.</li>
+            <li>Results are shown in Streamlit and can be exported; API logs predictions to JSONL.</li>
+          </ol>
+          <h3>Third-Party Dependencies</h3>
+          <p>PyTorch, scikit-learn, SHAP, LIME, Captum, Plotly, Streamlit, FastAPI, Uvicorn, NumPy, pandas, Matplotlib, Seaborn.</p>
+        </div>
+      </details>
+    </section>
+    <section id="file-map" class="section doc-section">
+      <details open>
+        <summary>4) Folder and File Map</summary>
+        <div class="content">
+          <div class="grid">
+            <div>
+              <h3>Root</h3>
+              <ul>
+                <li><code>api_service.py</code>: FastAPI microservice</li>
+                <li><code>dashboard_real.py</code>: Streamlit dashboard</li>
+                <li><code>integration_real.py</code>: Integration of baseline + DL models</li>
+                <li><code>demo_complete_system.py</code>: End-to-end CLI demo</li>
+                <li><code>requirements.txt</code>: Python dependencies</li>
+                <li><code>Dockerfile</code> / <code>docker-compose.yml</code>: Deployment</li>
+                <li><code>ENHANCED_README.md</code>, <code>FINAL_SUMMARY.md</code>, <code>PROJECT_DOCUMENTATION.md</code>: extended docs</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Explainability & Utilities</h3>
+              <ul>
+                <li><code>explainability_utils/explainability.py</code>: SHAP/LIME/Captum utils</li>
+                <li><code>explainability_utils/metrics.py</code>: AUROC, AUPRC, lead-time, etc.</li>
+                <li><code>explainability_utils/data_loader.py</code>: ICU dataset and loaders</li>
+                <li><code>explainability_utils/training.py</code>: Trainer and early stopping</li>
+                <li><code>explainability_utils/visualization.py</code>: Matplotlib plots</li>
+                <li><code>explainability_utils/calibration.py</code>: Probability calibration</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Notebooks</h3>
+              <ul>
+                <li><code>Capstone.ipynb</code>, <code>notebooks/01_data_loading_and_exploration.ipynb</code></li>
+                <li>Used for exploration/training demos (optional for demo).</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+    <section id="key-modules" class="section doc-section">
+      <details open>
+        <summary>5) Key Modules / Components</summary>
+        <div class="content">
+          <h3>Backend — <code>api_service.py</code></h3>
+          <ul>
+            <li><strong>Entry</strong>: <code>uvicorn</code> runner when <code>__main__</code></li>
+            <li><strong>Models</strong>: Pydantic schemas: <code>PatientData</code>, <code>PredictionResponse</code>, etc.</li>
+            <li><strong>Core</strong>:
+              <ul>
+                <li><code>GET /health</code> — health probe</li>
+                <li><code>GET /models/status</code> — model versions</li>
+                <li><code>POST /predict</code>, <code>/predict/batch</code> — risk prediction</li>
+                <li><code>POST /explain</code> — SHAP/LIME-style explanation</li>
+                <li><code>POST /clinical-scores</code> — SIRS, qSOFA, SOFA</li>
+                <li><code>POST /compare</code> — multi-model comparison and ensemble</li>
+              </ul>
+            </li>
+          </ul>
+          <pre><code data-lang="python">@app.post("/predict", response_model=PredictionResponse)
+async def predict_sepsis(patient_data: PatientData, background_tasks: BackgroundTasks):
+    loop = asyncio.get_event_loop()
+    pred = await loop.run_in_executor(executor, _predict_single_patient, patient_data.dict())
+    background_tasks.add_task(log_prediction, patient_data.patient_id, pred)
+    return PredictionResponse(**pred)
+</code></pre>
+          <h3>Dashboard — <code>dashboard_real.py</code></h3>
+          <ul>
+            <li><strong>Tabs</strong>: Risk Overview, Model Predictions, Risk Trajectory, Explainability, Dynamic Explainability, Patient Data, Performance, Clinical Workflow, Fairness</li>
+            <li><strong>Key Helpers</strong>: <code>generate_patient_data</code>, <code>calculate_sirs_score</code>, <code>show_dynamic_explainability</code></li>
+          </ul>
+          <pre><code data-lang="python">def show_dynamic_explainability(patient_data):
+    feature_names = ['heart_rate','map','temperature','respiratory_rate','lactate','wbc','creatinine','age']
+    dyn = get_dynamic_explainability(patient_data, feature_names, 24)
+    # Plot heatmap + top features over time
+</code></pre>
+          <h3>Integration — <code>integration_real.py</code></h3>
+          <ul>
+            <li><strong>Class</strong>: <code>SepsisPredictionIntegration</code> loads/creates baseline & DL models, preprocessing, and scoring.</li>
+            <li><strong>Ensemble</strong>: Combines individual model risk into overall risk + recommendation.</li>
+          </ul>
+          <pre><code data-lang="python">def get_comprehensive_prediction(self, patient_data):
+    baseline = self.predict_baseline_models(patient_data)
+    deep = self.predict_deep_learning_models(patient_data)
+    all_preds = {**baseline, **deep}
+    scores = [p['risk_score'] for p in all_preds.values() if isinstance(p, dict) and 'risk_score' in p]
+    return { 'individual_predictions': all_preds, 'ensemble_prediction': { 'average_risk_score': float(np.mean(scores) if scores else 0.5) } }
+</code></pre>
+          <h3>Explainability — <code>explainability_utils/explainability.py</code></h3>
+          <ul>
+            <li><strong>Class</strong>: <code>SepsisExplainer</code> with SHAP, LIME, and Captum methods</li>
+            <li><strong>Temporal</strong>: <code>get_dynamic_explainability</code> builds explainability-over-time data</li>
+          </ul>
+          <pre><code data-lang="python">class SepsisExplainer:
+    def get_shap_explanations(self, X: np.ndarray, max_evals: int = 100):
+        shap_values = self.shap_explainer(X, max_evals=max_evals)
+        feature_importance = np.abs(shap_values.values).mean(axis=0)
+        return { 'shap_values': shap_values.values, 'feature_importance': pd.DataFrame({ 'feature': self.feature_names, 'importance': feature_importance }) }
+</code></pre>
+        </div>
+      </details>
+    </section>
+    <section id="api-docs" class="section doc-section">
+      <details open>
+        <summary>6) API Documentation</summary>
+        <div class="content">
+          <p>Server runs FastAPI at <code>http://localhost:8000</code>. Interactive docs at <code>/docs</code>.</p>
+          <h3>Endpoints</h3>
+          <ul>
+            <li><strong>GET</strong> <code>/health</code> → { status, timestamp, version, service }</li>
+            <li><strong>GET</strong> <code>/models/status</code> → model versions and status</li>
+            <li><strong>POST</strong> <code>/predict</code> → single prediction</li>
+            <li><strong>POST</strong> <code>/predict/batch</code> → batch predictions</li>
+            <li><strong>POST</strong> <code>/explain</code> → explanation payload</li>
+            <li><strong>POST</strong> <code>/clinical-scores</code> → SIRS/qSOFA/SOFA</li>
+            <li><strong>POST</strong> <code>/compare</code> → per-model + ensemble results</li>
+          </ul>
+          <h3>Example Request — <code>/predict</code></h3>
+          <pre><code data-lang="json">{
+  "patient_id": "P001",
+  "vital_signs": { "heart_rate": 85, "map": 78, "temperature": 37.2, "respiratory_rate": 18 },
+  "lab_values": { "lactate": 2.1, "wbc": 12.5, "creatinine": 1.2 },
+  "demographics": { "age": 65, "gender": "Male" }
+}
+</code></pre>
+          <h3>Example Response — <code>/predict</code></h3>
+          <pre><code data-lang="json">{
+  "patient_id": "P001",
+  "risk_score": 0.68,
+  "risk_level": "medium",
+  "confidence": 0.83,
+  "top_features": [{"feature":"lactate","importance":0.3,"value":2.1}],
+  "recommendations": ["⚠️ Close monitoring recommended", "Repeat laboratory tests in 2-4 hours"],
+  "clinical_scores": {"sirs": 2, "qsofa": 1, "sofa": 1},
+  "timestamp": "...",
+  "model_versions": {"ensemble": "v1.0", "primary_model": "gru_d_v1.0"}
+}
+</code></pre>
+          <h3>Auth</h3>
+          <p>No auth in this capstone demo. In production, restrict CORS, add auth tokens, and audit logging.</p>
+          <h3>Error Handling</h3>
+          <p>Errors return JSON with <code>detail</code> and HTTP codes. The API wraps exceptions with meaningful messages.</p>
+        </div>
+      </details>
+    </section>
+    <section id="frontend" class="section doc-section">
+      <details open>
+        <summary>7) Frontend Summary</summary>
+        <div class="content">
+          <p><strong>Framework</strong>: Streamlit</p>
+          <p><strong>Entry</strong>: <code>dashboard_real.py</code>, tabs orchestrate different analyses. Data can come from Dataset.csv, manual form, or uploaded CSV.</p>
+          <ul>
+            <li><strong>Routing</strong>: Streamlit tabs — no client-side router</li>
+            <li><strong>State</strong>: <code>st.session_state</code> for newly added/selected patients</li>
+            <li><strong>Data Fetch</strong>: Local computation; could call FastAPI for remote inference</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="database" class="section doc-section">
+      <details open>
+        <summary>8) Database / Persistence</summary>
+        <div class="content">
+          <ul>
+            <li><strong>Files</strong>: JSON/CSV artifacts under <code>outputs/</code> (prediction logs, reports, performance)</li>
+            <li><strong>Docker Compose (optional)</strong>: Redis and Postgres are defined but not strictly required by current code; future-ready.</li>
+            <li><strong>Logging</strong>: API appends JSON Lines to <code>outputs/prediction_log.jsonl</code>.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="testing" class="section doc-section">
+      <details open>
+        <summary>9) Testing & CI/CD</summary>
+        <div class="content">
+          <p>No CI configured in this repo. For local checks:</p>
+          <pre><code data-lang="bash"># Suggested local checks
+python -m uvicorn api_service:app --port 8000 --reload  # API smoke test
+streamlit run dashboard_real.py                         # UI smoke test
+python demo_complete_system.py                          # End-to-end demo
+</code></pre>
+          <p>Future CI: lint (flake8/black), unit tests (pytest), and API contract tests.</p>
+        </div>
+      </details>
+    </section>
+    <section id="deployment" class="section doc-section">
+      <details open>
+        <summary>10) Deployment Guide</summary>
+        <div class="content">
+          <h3>Dockerfile Stages</h3>
+          <ul>
+            <li><strong>production</strong>: Runs API (FastAPI/Uvicorn)</li>
+            <li><strong>dashboard</strong>: Runs Streamlit dashboard</li>
+            <li><strong>complete</strong>: Starts API + dashboard via <code>start.sh</code></li>
+            <li><strong>development</strong>: Adds dev tools + reload</li>
+          </ul>
+          <h3>Compose Services</h3>
+          <ul>
+            <li><code>sepsis-api</code> at 8000 (healthcheck at <code>/health</code>)</li>
+            <li><code>sepsis-dashboard</code> at 8501 (depends on API)</li>
+            <li>Optional: <code>redis</code>, <code>postgres</code>, <code>nginx</code></li>
+          </ul>
+          <pre><code data-lang="yaml">version: '3.8'
+services:
+  sepsis-api:
+    build: { context: ., target: production }
+    ports: ["8000:8000"]
+    environment: ["PYTHONPATH=/app", "LOG_LEVEL=info"]
+  sepsis-dashboard:
+    build: { context: ., target: dashboard }
+    ports: ["8501:8501"]
+    depends_on: [sepsis-api]
+</code></pre>
+        </div>
+      </details>
+    </section>
+    <section id="security" class="section doc-section">
+      <details open>
+        <summary>11) Security & Performance Notes</summary>
+        <div class="content">
+          <ul>
+            <li><strong>Sensitive data</strong>: Do not commit real patient data. Keep any keys/configs in <code>.env</code>.</li>
+            <li><strong>CORS</strong>: Open to all in demo; restrict in production.</li>
+            <li><strong>Performance</strong>: Use executor for CPU-bound work; consider batching and caching.</li>
+            <li><strong>Health/Monitoring</strong>: Health endpoints and logs are in place; add structured logging in production.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="contribute" class="section doc-section">
+      <details open>
+        <summary>12) How to Extend / Contribute</summary>
+        <div class="content">
+          <ol>
+            <li><strong>Add a new endpoint</strong>: Create a Pydantic model, add <code>@app.post("/new-endpoint")</code>, implement logic, and update docs.</li>
+            <li><strong>Plug a real model</strong>: Replace simulated risk with real inference in <code>_predict_single_patient</code> and <code>integration_real.py</code>.</li>
+            <li><strong>Hook up explainers</strong>: Use <code>SepsisExplainer</code> with real model and background data.</li>
+            <li><strong>Dashboard</strong>: Add a new tab by creating a function and adding it to the <code>st.tabs</code> list.</li>
+            <li><strong>Code style</strong>: Prefer descriptive names, early returns, minimal try/except, and type hints for public APIs.</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+    <section id="demo" class="section doc-section">
+      <details open>
+        <summary>13) Demo & Review Preparation</summary>
+        <div class="content">
+          <h3>Two-minute Demo Script</h3>
+          <ol>
+            <li>Start via <code>docker-compose up -d</code> or run dashboard and API separately.</li>
+            <li>Open <code>http://localhost:8501</code>: show Risk Overview (risk score, level, recommendations).</li>
+            <li>Open Model Predictions: show per-model bars and confidence with uncertainty.</li>
+            <li>Show Risk Trajectory: highlight thresholds and trend.</li>
+            <li>Open Dynamic Explainability: heatmap over 24h and narrative.</li>
+            <li>Open API docs <code>/docs</code> and send a sample <code>/predict</code> request.</li>
+          </ol>
+          <h3>Key Talking Points</h3>
+          <ul>
+            <li><strong>Clinical impact</strong>: 4–6h advance warning, actionable next steps.</li>
+            <li><strong>Trust</strong>: SHAP/LIME/Captum and narratives justify alerts.</li>
+            <li><strong>Engineering</strong>: Modular code, FastAPI + Streamlit, Dockerized.</li>
+          </ul>
+          <h3>Likely Questions</h3>
+          <ul>
+            <li>How is lead-time measured? → See metrics in <code>explainability_utils/metrics.py</code>.</li>
+            <li>What models are used? → Logistic, RF, XGBoost, GRU-D, LSTM, CNN-LSTM, Transformer (simulated/plug-in).</li>
+            <li>What if the dataset is missing? → Dashboard falls back to realistic sample data.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="todos" class="section doc-section">
+      <details open>
+        <summary>14) Outstanding TODOs / Known Issues</summary>
+        <div class="content">
+          <ul>
+            <li><strong>Absolute paths</strong>: <code>api_service.py</code> and <code>dashboard_real.py</code> set <code>project_root = '/Users/ashwinnair/Downloads/Capstone 2'</code>. Replace with <code>Path(__file__).parent</code> or environment variable for portability.</li>
+            <li><strong>Dockerfile COPY paths</strong>: Stages reference <code>utils/</code> and <code>models/</code> directories that are not present in this repo snapshot; adjust to <code>explainability_utils/</code> or remove those COPY lines when building.</li>
+            <li><strong>Optional services</strong>: Redis/Postgres/Nginx are defined in Compose but unused by current code; safe to omit for demos.</li>
+            <li><strong>No CI</strong>: Add pytest + linting + GitHub Actions for repeatable builds.</li>
+            <li><strong>Explainability performance</strong>: SHAP/LIME are CPU-heavy; cache or switch to model-specific explainers for speed.</li>
+          </ul>
+          <h3>Portability fix (example)</h3>
+          <pre><code data-lang="python"># Replace hardcoded project_root usage in api_service.py, dashboard_real.py
+from pathlib import Path
+import sys
+project_root = str(Path(__file__).resolve().parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+</code></pre>
+          <p>No in-code TODO/FIXME comments were found in this repository scan.</p>
+        </div>
+      </details>
+    </section>
+    <section id="glossary" class="section doc-section">
+      <details open>
+        <summary>15) Glossary / Reference</summary>
+        <div class="content">
+          <h3>Clinical Terms</h3>
+          <ul>
+            <li><strong>SIRS</strong>: Systemic Inflammatory Response Syndrome</li>
+            <li><strong>qSOFA/SOFA</strong>: Quick/Sequential Organ Failure Assessment</li>
+            <li><strong>Lead-time</strong>: Time between first high-risk alert and sepsis onset</li>
+          </ul>
+          <h3>Libraries</h3>
+          <ul>
+            <li><strong>FastAPI</strong>: Python web framework for APIs</li>
+            <li><strong>Streamlit</strong>: Data app framework for Python</li>
+            <li><strong>PyTorch</strong>: Deep learning framework</li>
+            <li><strong>SHAP/LIME/Captum</strong>: Model explainability toolkits</li>
+          </ul>
+          <h3>Key Commands (copyable)</h3>
+          <pre><code data-lang="bash"># Complete system
+docker-compose up -d
+
+# Dev: API + Dashboard (local)
+python api_service.py
+streamlit run dashboard_real.py
+
+# Build individual images
+docker build --target production -t sepsis-api .
+docker build --target dashboard -t sepsis-dashboard .
+</code></pre>
+        </div>
+      </details>
+    </section>
+    <section id="impact" class="section doc-section">
+      <details open>
+        <summary>16) Novelty & Societal Impact</summary>
+        <div class="content">
+          <h3>What makes this project novel</h3>
+          <ul>
+            <li><strong>End-to-end integration</strong>: Combines clinical scores, multiple ML/DL models, explainability, and a usable dashboard in one system.</li>
+            <li><strong>Dynamic explainability</strong>: Time-evolving feature importance (explainability-over-time) to justify alerts longitudinally, not just at a single point.</li>
+            <li><strong>Demo-to-deployment path</strong>: Clear Dockerized pathway from local demo to microservice-backed deployment.</li>
+            <li><strong>Clinician-centered UX</strong>: Threshold tuning with live sensitivity/specificity plus narrative explanations to bridge AI and clinical reasoning.</li>
+          </ul>
+          <h3>Clinical and societal benefits</h3>
+          <ul>
+            <li><strong>Earlier intervention</strong>: 4–6 hour lead-time can reduce complications, length of stay, and mortality.</li>
+            <li><strong>Resource stewardship</strong>: Prioritizes high-risk cases for rapid evaluation in busy ICUs.</li>
+            <li><strong>Education</strong>: Narratives and factor summaries support training for residents and nurses.</li>
+            <li><strong>Equity focus</strong>: Built-in fairness view encourages subgroup performance review and bias monitoring.</li>
+          </ul>
+          <h3>Ethics, safety, and fairness</h3>
+          <ul>
+            <li><strong>Transparency</strong>: SHAP/LIME/Captum outputs plus clinical narratives explain model behavior.</li>
+            <li><strong>Human-in-the-loop</strong>: System provides recommendations, not orders; clinicians retain final judgment.</li>
+            <li><strong>Bias awareness</strong>: Fairness tab surfaces subgroup differences; encourages local validation before adoption.</li>
+            <li><strong>Privacy</strong>: Intended to run on secure hospital infrastructure; avoid exporting PHI; audit logs should be access-controlled.</li>
+          </ul>
+          <h3>Adoption and workflow integration</h3>
+          <ul>
+            <li><strong>Stakeholders</strong>: Intensivists, nursing staff, quality/safety officers, IT, and administrators.</li>
+            <li><strong>Workflow fit</strong>: Dashboard for bedside review; API for EHR integration and alerts.</li>
+            <li><strong>Rollout</strong>: Start as a decision-support pilot with shadow-mode monitoring, then phased activation.</li>
+          </ul>
+          <h3>Regulatory & compliance (assumed)</h3>
+          <ul>
+            <li><strong>Clinical validation</strong>: Prospective evaluation and IRB oversight before clinical use.</li>
+            <li><strong>Standards</strong>: Logging, versioning, and change control to support auditability.</li>
+            <li><strong>Security</strong>: Network isolation, least-privilege access, encrypted at-rest/transport.</li>
+          </ul>
+          <h3>Limitations & future work</h3>
+          <ul>
+            <li><strong>Data shift</strong>: Models can drift across hospitals; recommend periodic re-calibration and monitoring.</li>
+            <li><strong>Labeling nuances</strong>: Sepsis onset labeling varies; align with local protocols.</li>
+            <li><strong>Real-time feeds</strong>: Add streaming ingestion and robust failure handling for production.</li>
+            <li><strong>Broader fairness</strong>: Expand equity metrics and intervention outcome monitoring.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="perf-ops" class="section doc-section">
+      <details open>
+        <summary>17) Performance & Ops Tuning</summary>
+        <div class="content">
+          <h3>API (FastAPI/Uvicorn)</h3>
+          <ul>
+            <li><strong>Workers</strong>: Use multiple workers on multi-core hosts<br><code>uvicorn api_service:app --host 0.0.0.0 --port 8000 --workers 2</code></li>
+            <li><strong>Log level</strong>: Control via <code>LOG_LEVEL</code> (info/debug/warn) for noise vs. visibility.</li>
+            <li><strong>Thread pool</strong>: Prediction runs in a threadpool; increase <code>max_workers</code> in the executor if needed.</li>
+          </ul>
+          <h3>Dashboard (Streamlit)</h3>
+          <ul>
+            <li><strong>Caching</strong>: Prefer <code>@st.cache_data</code> for expensive data loads.</li>
+            <li><strong>Plotly</strong>: Reduce points, set <code>use_container_width=True</code>, avoid heavy redraws.</li>
+            <li><strong>State</strong>: Store uploaded or manual patient data in <code>st.session_state</code> to avoid recomputation.</li>
+          </ul>
+          <h3>Explainability workloads</h3>
+          <ul>
+            <li><strong>Background data</strong>: For SHAP/LIME, cap background samples (e.g., 100–500) and cache preprocessed arrays.</li>
+            <li><strong>Batching</strong>: Run explanations asynchronously or off the request path; precompute for demo patients.</li>
+          </ul>
+          <h3>Docker & Compose</h3>
+          <ul>
+            <li><strong>Resources</strong>: Allocate CPU/RAM limits appropriately; mount only needed volumes.</li>
+            <li><strong>Build size</strong>: Keep base slim; avoid unnecessary COPY of large dirs/artifacts.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="runbook" class="section doc-section">
+      <details open>
+        <summary>18) Deployment Runbook</summary>
+        <div class="content">
+          <h3>Smoke test (local)</h3>
+          <pre><code data-lang="bash"># API
+python -m uvicorn api_service:app --host 0.0.0.0 --port 8000 --reload
+# Dashboard
+streamlit run dashboard_real.py
+# Check
+# http://localhost:8000/health  -> { status: "healthy" }
+# http://localhost:8501        -> dashboard loads
+</code></pre>
+          <h3>Compose quickstart</h3>
+          <pre><code data-lang="bash">docker-compose up -d
+# If ports busy, change host mappings (e.g., 8001:8000, 8502:8501)</code></pre>
+          <h3>Common failures</h3>
+          <ul>
+            <li><strong>Dataset.csv missing</strong>: Dashboard warns and uses sample data; add the file for real-data views.</li>
+            <li><strong>Healthcheck failing</strong>: Open <code>/health</code>; inspect container logs; confirm port mapping.</li>
+            <li><strong>Import path errors</strong>: Apply portability snippet to remove hardcoded <code>project_root</code>.</li>
+            <li><strong>Docker build errors</strong>: Remove/adjust COPY of missing dirs (<code>utils/</code>, <code>models/</code>) or point to <code>explainability_utils/</code>.</li>
+          </ul>
+          <h3>Disable optional services</h3>
+          <pre><code data-lang="yaml"># In docker-compose.yml, comment out services you don't need
+# redis:
+# postgres:
+# nginx:
+</code></pre>
+          <h3>Operational checks</h3>
+          <ul>
+            <li>Logs rotating and not filling disk; log level appropriate.</li>
+            <li>API returns 200 on <code>/health</code> and <code>/models/status</code>.</li>
+            <li>Dashboard tabs load without long blocking operations.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="faq" class="section doc-section">
+      <details open>
+        <summary>19) FAQ</summary>
+        <div class="content">
+          <h3>Common questions</h3>
+          <ul>
+            <li><strong>Can it run without Dataset.csv?</strong><br>Yes. The dashboard falls back to realistic sample data. Real data unlocks richer views.</li>
+            <li><strong>Use API only?</strong><br>Build/run the <code>production</code> Docker target or start Uvicorn locally; interact via <code>/docs</code>.</li>
+            <li><strong>Change risk thresholds globally?</strong><br>Use the dashboard sliders for demo; in production, persist thresholds in config and read in both API and UI.</li>
+            <li><strong>Disable optional services?</strong><br>Comment out <code>redis</code>, <code>postgres</code>, <code>nginx</code> in <code>docker-compose.yml</code>.</li>
+            <li><strong>Calibrate thresholds for my hospital?</strong><br>Evaluate ROC/PR on local validation data; choose a threshold meeting desired specificity (e.g., 80%).</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="professor-qa" class="section doc-section">
+      <details open>
+        <summary>20) Professor Q&A</summary>
+        <div class="content">
+          <ul>
+            <li><strong>Q: How is the 4–6 hour lead-time measured?</strong><br>A: Using time-stamped labels and predicted probabilities, we compute the time gap between first threshold-crossing and sepsis onset (see <code>explainability_utils/metrics.py</code> for lead-time and timeliness).</li>
+            <li><strong>Q: Why combine classical ML and DL?</strong><br>A: Baselines offer interpretability and speed; DL captures temporal/complex patterns. The ensemble improves robustness and averages uncertainty.</li>
+            <li><strong>Q: How do you handle missing ICU data?</strong><br>A: Masks and imputation in loaders; clinical-rule fallbacks in dashboard; GRU-D architecture (conceptually) supports time decay for missingness.</li>
+            <li><strong>Q: What prevents overfitting?</strong><br>A: Patient-wise splits, early stopping, LR scheduling, and calibration. The demo simulates predictions where trained artifacts are not included.</li>
+            <li><strong>Q: How did you choose thresholds?</strong><br>A: Picked to meet a target specificity (e.g., 80%) on validation; clinicians can tune thresholds based on operational goals.</li>
+            <li><strong>Q: How is fairness addressed?</strong><br>A: A fairness tab surfaces subgroup metrics (age, gender, etc.). We recommend site-specific analysis and threshold adjustments as needed.</li>
+            <li><strong>Q: What’s the clinical workflow impact?</strong><br>A: Risk alerts with explanations inform early interventions. The system augments clinician judgment; not an autonomous diagnostic.</li>
+            <li><strong>Q: What are deployment prerequisites?</strong><br>A: Container runtime, secure network, PHI governance, and EHR integration. Start in shadow mode; collect feedback; then graduate to alerts.</li>
+            <li><strong>Q: What about data shift across hospitals?</strong><br>A: Monitor drift, recalibrate periodically, and retrain with local data if performance drops.</li>
+            <li><strong>Q: What is the main novelty?</strong><br>A: End-to-end, clinician-centered integration with dynamic explainability and a clear path from demo to deployable microservice.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="visuals" class="section doc-section">
+      <details open>
+        <summary>21) Visual Gallery</summary>
+        <div class="content">
+          <h3>System Architecture (SVG)</h3>
+          <svg width="820" height="220" role="img" aria-label="System Architecture" style="max-width:100%;height:auto;border:1px solid #1f2937;background:#0b1220;border-radius:8px">
+            <defs>
+              <style type="text/css"><![CDATA[
+                .b { fill:#111827; stroke:#334155; stroke-width:1; rx:8; ry:8; }
+                .t { fill:#e5e7eb; font: 12px system-ui; }
+                .l { stroke:#4b5563; stroke-width:1; marker-end:url(#arrow); }
+              ]]></style>
+              <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563" />
+              </marker>
+            </defs>
+            <rect class="b" x="40" y="30" width="180" height="60"/>
+            <text class="t" x="130" y="60" text-anchor="middle">Streamlit Dashboard</text>
+            <text class="t" x="130" y="78" text-anchor="middle">(Frontend)</text>
+
+            <rect class="b" x="320" y="30" width="180" height="60"/>
+            <text class="t" x="410" y="60" text-anchor="middle">FastAPI Microservice</text>
+            <text class="t" x="410" y="78" text-anchor="middle">(Backend)</text>
+
+            <rect class="b" x="600" y="30" width="180" height="60"/>
+            <text class="t" x="690" y="60" text-anchor="middle">Models (7 total)</text>
+            <text class="t" x="690" y="78" text-anchor="middle">ML + DL Ensemble</text>
+
+            <line class="l" x1="220" y1="60" x2="320" y2="60"/>
+            <line class="l" x1="500" y1="60" x2="600" y2="60"/>
+
+            <rect class="b" x="40" y="140" width="180" height="60"/>
+            <text class="t" x="130" y="170" text-anchor="middle">Dataset.csv / Uploads</text>
+
+            <rect class="b" x="320" y="140" width="180" height="60"/>
+            <text class="t" x="410" y="168" text-anchor="middle">Explainability</text>
+            <text class="t" x="410" y="186" text-anchor="middle">(SHAP / LIME / Captum)</text>
+
+            <line class="l" x1="130" y1="140" x2="130" y2="90"/>
+            <line class="l" x1="410" y1="140" x2="410" y2="90"/>
+          </svg>
+
+          <h3>Data Flow Pipeline (SVG)</h3>
+          <svg width="820" height="160" role="img" aria-label="Data Flow" style="max-width:100%;height:auto;border:1px solid #1f2937;background:#0b1220;border-radius:8px;margin-top:8px">
+            <defs>
+              <style type="text/css"><![CDATA[
+                .b { fill:#111827; stroke:#334155; stroke-width:1; rx:8; ry:8; }
+                .t { fill:#e5e7eb; font: 12px system-ui; }
+                .l { stroke:#4b5563; stroke-width:1; marker-end:url(#arrow2); }
+              ]]></style>
+              <marker id="arrow2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563" />
+              </marker>
+            </defs>
+            <rect class="b" x="20" y="50" width="150" height="60"/>
+            <text class="t" x="95" y="82" text-anchor="middle">Input Data</text>
+
+            <rect class="b" x="190" y="50" width="150" height="60"/>
+            <text class="t" x="265" y="76" text-anchor="middle">Preprocess &</text>
+            <text class="t" x="265" y="94" text-anchor="middle">Clinical Scores</text>
+
+            <rect class="b" x="360" y="50" width="150" height="60"/>
+            <text class="t" x="435" y="82" text-anchor="middle">Models (ML/DL)</text>
+
+            <rect class="b" x="530" y="50" width="120" height="60"/>
+            <text class="t" x="590" y="77" text-anchor="middle">Ensemble</text>
+
+            <rect class="b" x="670" y="50" width="130" height="60"/>
+            <text class="t" x="735" y="70" text-anchor="middle">Explainability</text>
+            <text class="t" x="735" y="88" text-anchor="middle">+ UI/API</text>
+
+            <line class="l" x1="170" y1="80" x2="190" y2="80"/>
+            <line class="l" x1="340" y1="80" x2="360" y2="80"/>
+            <line class="l" x1="510" y1="80" x2="530" y2="80"/>
+            <line class="l" x1="650" y1="80" x2="670" y2="80"/>
+          </svg>
+
+          <h3>API Request Lifecycle (SVG)</h3>
+          <svg width="820" height="220" role="img" aria-label="API Request Lifecycle" style="max-width:100%;height:auto;border:1px solid #1f2937;background:#0b1220;border-radius:8px;margin-top:8px">
+            <defs>
+              <style type="text/css"><![CDATA[
+                .b { fill:#111827; stroke:#334155; stroke-width:1; rx:8; ry:8; }
+                .t { fill:#e5e7eb; font: 12px system-ui; }
+                .l { stroke:#4b5563; stroke-width:1; marker-end:url(#arrow3); }
+              ]]></style>
+              <marker id="arrow3" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563" />
+              </marker>
+            </defs>
+            <rect class="b" x="40" y="30" width="200" height="50"/>
+            <text class="t" x="140" y="60" text-anchor="middle">Client → POST /predict</text>
+
+            <rect class="b" x="300" y="30" width="220" height="50"/>
+            <text class="t" x="410" y="50" text-anchor="middle">FastAPI Validation (Pydantic)</text>
+
+            <rect class="b" x="580" y="30" width="200" height="50"/>
+            <text class="t" x="680" y="50" text-anchor="middle">ThreadPool Inference</text>
+
+            <line class="l" x1="240" y1="55" x2="300" y2="55"/>
+            <line class="l" x1="520" y1="55" x2="580" y2="55"/>
+
+            <rect class="b" x="40" y="130" width="230" height="60"/>
+            <text class="t" x="155" y="160" text-anchor="middle">Audit Log (Background Task)</text>
+
+            <rect class="b" x="320" y="130" width="200" height="60"/>
+            <text class="t" x="420" y="160" text-anchor="middle">Response (JSON)</text>
+
+            <line class="l" x1="680" y1="80" x2="440" y2="130"/>
+            <line class="l" x1="680" y1="80" x2="270" y2="130"/>
+          </svg>
+          <p class="subtitle" style="margin-top:8px">Tip: You can print or screenshot these diagrams for slides; they scale cleanly as they are vector graphics (SVG).</p>
+        </div>
+      </details>
+    </section>
+    <footer>
+      <div>Sepsis Digital Twin — Capstone Documentation • Single-file HTML (no external deps)</div>
+      <div>Paths referenced: <code>api_service.py</code>, <code>dashboard_real.py</code>, <code>integration_real.py</code>, <code>explainability_utils/*</code>, <code>Dockerfile</code>, <code>docker-compose.yml</code></div>
+    </footer>
+  </main>
+  <script>
+    document.getElementById('gen-date').innerText = new Date().toLocaleString();
+  </script>
+</body>
+</html>
