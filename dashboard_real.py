@@ -17,6 +17,7 @@ warnings.filterwarnings('ignore')
 # Add project root to path
 project_root = '/Users/ashwinnair/Downloads/Capstone 2'
 sys.path.append(project_root)
+from Capstone.integration import ModelInference
 
 # Page configuration
 st.set_page_config(
@@ -942,7 +943,137 @@ def show_performance_metrics():
     """Display model performance metrics"""
     st.header("📊 Model Performance Metrics")
     
-    # Performance data
+    # Try to load real comparison metrics if available
+    possible_paths = [
+        os.path.join(project_root, 'outputs', 'results', 'model_comparison.csv'),
+        os.path.join(project_root, 'Capstone', 'outputs', 'results', 'model_comparison.csv')
+    ]
+    existing_paths = [p for p in possible_paths if os.path.exists(p)]
+    csv_path = None
+    if existing_paths:
+        # Prefer the most recently modified file
+        csv_path = max(existing_paths, key=lambda p: os.path.getmtime(p))
+    
+    if csv_path is not None:
+        try:
+            df_raw = pd.read_csv(csv_path)
+            # Handle index column
+            if 'Unnamed: 0' in df_raw.columns:
+                df_raw = df_raw.rename(columns={'Unnamed: 0': 'Model'})
+            # Normalize column names
+            rename_map = {
+                'auroc': 'AUROC', 'auprc': 'AUPRC', 'accuracy': 'Accuracy',
+                'precision': 'Precision', 'recall': 'Recall', 'specificity': 'Specificity',
+                'f1_score': 'F1-Score', 'sensitivity_at_80_specificity': 'Sensitivity@80%Spec',
+                'accuracy_r85': 'Accuracy@R85', 'precision_r85': 'Precision@R85',
+                'recall_r85': 'Recall@R85', 'specificity_r85': 'Specificity@R85',
+                'f1_score_r85': 'F1-Score@R85', 'threshold_r85': 'Threshold@R85'
+            }
+            for k, v in rename_map.items():
+                if k in df_raw.columns:
+                    df_raw = df_raw.rename(columns={k: v})
+            # Ensure Model column
+            if 'Model' not in df_raw.columns:
+                df_raw.insert(0, 'Model', df_raw.index)
+            # Select key columns if present
+            cols_pref = ['Model', 'AUROC', 'AUPRC', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1-Score', 'Sensitivity@80%Spec',
+                         'Accuracy@R85', 'Precision@R85', 'Recall@R85', 'Specificity@R85', 'F1-Score@R85', 'Threshold@R85']
+            present_cols = [c for c in cols_pref if c in df_raw.columns]
+            df_metrics = df_raw[present_cols].copy()
+            
+            st.subheader("Model Performance Comparison (latest evaluation)")
+            st.caption(f"Loaded from: {os.path.relpath(csv_path, project_root)}")
+            st.dataframe(df_metrics, use_container_width=True)
+            
+            # Accuracy bar chart if available
+            if 'Accuracy' in df_metrics.columns:
+                fig_acc = px.bar(
+                    df_metrics, x='Model', y='Accuracy',
+                    title='Accuracy by Model', color='Accuracy',
+                    color_continuous_scale='Blues'
+                )
+                fig_acc.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig_acc, use_container_width=True)
+            
+            # AUROC and AUPRC if available
+            col1, col2 = st.columns(2)
+            if 'AUROC' in df_metrics.columns:
+                with col1:
+                    fig_auroc = px.bar(
+                        df_metrics, x='Model', y='AUROC',
+                        title='AUROC Comparison', color='AUROC',
+                        color_continuous_scale='Viridis'
+                    )
+                    fig_auroc.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig_auroc, use_container_width=True)
+            if 'AUPRC' in df_metrics.columns:
+                with col2:
+                    fig_auprc = px.bar(
+                        df_metrics, x='Model', y='AUPRC',
+                        title='AUPRC Comparison', color='AUPRC',
+                        color_continuous_scale='Plasma'
+                    )
+                    fig_auprc.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig_auprc, use_container_width=True)
+
+            # Metrics at Recall=0.85 if present
+            if 'Precision@R85' in df_metrics.columns or 'Specificity@R85' in df_metrics.columns:
+                st.subheader("Operating Point: Recall ≈ 0.85")
+                c1, c2 = st.columns(2)
+                if 'Precision@R85' in df_metrics.columns:
+                    with c1:
+                        fig_p_r85 = px.bar(
+                            df_metrics, x='Model', y='Precision@R85',
+                            title='Precision @ Recall=0.85', color='Precision@R85',
+                            color_continuous_scale='Blues'
+                        )
+                        fig_p_r85.update_layout(xaxis_tickangle=-45)
+                        st.plotly_chart(fig_p_r85, use_container_width=True)
+                if 'Specificity@R85' in df_metrics.columns:
+                    with c2:
+                        fig_s_r85 = px.bar(
+                            df_metrics, x='Model', y='Specificity@R85',
+                            title='Specificity @ Recall=0.85', color='Specificity@R85',
+                            color_continuous_scale='Greens'
+                        )
+                        fig_s_r85.update_layout(xaxis_tickangle=-45)
+                        st.plotly_chart(fig_s_r85, use_container_width=True)
+            
+            # Summary metrics if present
+            available = set(df_metrics.columns)
+            if {'Model', 'AUROC'} <= available:
+                best_auroc = df_metrics.iloc[df_metrics['AUROC'].idxmax()]
+            else:
+                best_auroc = None
+            if {'Model', 'AUPRC'} <= available:
+                best_auprc = df_metrics.iloc[df_metrics['AUPRC'].idxmax()]
+            else:
+                best_auprc = None
+            if {'Model', 'F1-Score'} <= available:
+                best_f1 = df_metrics.iloc[df_metrics['F1-Score'].idxmax()]
+            else:
+                best_f1 = None
+            
+            st.subheader("Performance Summary")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if best_auroc is not None:
+                    st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
+            with col2:
+                if best_auprc is not None:
+                    st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
+            with col3:
+                if best_f1 is not None:
+                    st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
+        except Exception as e:
+            st.warning(f"Failed to load real metrics ({e}). Showing demo metrics.")
+            _show_demo_metrics()
+    else:
+        st.info("No saved evaluation found at outputs/results/model_comparison.csv. Showing demo metrics.")
+        _show_demo_metrics()
+
+def _show_demo_metrics():
+    # Performance data (placeholder)
     metrics_data = {
         'Model': ['Logistic Regression', 'Random Forest', 'XGBoost', 'GRU-D', 'LSTM', 'CNN-LSTM', 'Transformer'],
         'AUROC': [0.85, 0.87, 0.89, 0.91, 0.88, 0.90, 0.89],
@@ -951,56 +1082,26 @@ def show_performance_metrics():
         'Specificity': [0.78, 0.81, 0.83, 0.85, 0.82, 0.84, 0.83],
         'F1-Score': [0.65, 0.68, 0.72, 0.75, 0.70, 0.73, 0.71]
     }
-    
-    # Create DataFrame
     df_metrics = pd.DataFrame(metrics_data)
-    
-    # Display metrics table
-    st.subheader("Model Performance Comparison")
+    st.subheader("Model Performance Comparison (demo)")
     st.dataframe(df_metrics, use_container_width=True)
-    
-    # Create performance charts
     col1, col2 = st.columns(2)
-    
     with col1:
-        # AUROC comparison
-        fig_auroc = px.bar(
-            df_metrics, 
-            x='Model', 
-            y='AUROC',
-            title='AUROC Comparison',
-            color='AUROC',
-            color_continuous_scale='Viridis'
-        )
+        fig_auroc = px.bar(df_metrics, x='Model', y='AUROC', title='AUROC Comparison', color='AUROC', color_continuous_scale='Viridis')
         fig_auroc.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig_auroc, use_container_width=True)
-    
     with col2:
-        # AUPRC comparison
-        fig_auprc = px.bar(
-            df_metrics, 
-            x='Model', 
-            y='AUPRC',
-            title='AUPRC Comparison',
-            color='AUPRC',
-            color_continuous_scale='Plasma'
-        )
+        fig_auprc = px.bar(df_metrics, x='Model', y='AUPRC', title='AUPRC Comparison', color='AUPRC', color_continuous_scale='Plasma')
         fig_auprc.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig_auprc, use_container_width=True)
-    
-    # Performance summary
     st.subheader("Performance Summary")
-    
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         best_auroc = df_metrics.loc[df_metrics['AUROC'].idxmax()]
         st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
-    
     with col2:
         best_auprc = df_metrics.loc[df_metrics['AUPRC'].idxmax()]
         st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
-    
     with col3:
         best_f1 = df_metrics.loc[df_metrics['F1-Score'].idxmax()]
         st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
@@ -1433,12 +1534,16 @@ def generate_patient_data_from_dict(patient_dict):
         # Calculate clinical risk
         clinical_risk = calculate_clinical_risk(patient_dict)
         
-        # Generate model predictions (try real models first, fallback to clinical)
+        # Generate model predictions (prefer deep learning checkpoints, fallback to classical, then simplified)
         try:
-            model_predictions = generate_real_model_predictions(patient_dict)
+            model_predictions = generate_dl_model_predictions(patient_dict)
         except Exception as e:
-            print(f"Real model prediction failed: {e}")
-            model_predictions = generate_simplified_predictions(patient_dict)
+            print(f"DL model prediction failed: {e}")
+            try:
+                model_predictions = generate_real_model_predictions(patient_dict)
+            except Exception as e2:
+                print(f"Classical model prediction failed: {e2}")
+                model_predictions = generate_simplified_predictions(patient_dict)
         
         # Calculate ensemble prediction
         risk_scores = [pred.get('risk_score', 0.3) for pred in model_predictions.values()]
@@ -1613,6 +1718,128 @@ def generate_simplified_predictions(patient_dict):
     
     return model_predictions
 
+
+def _load_feature_config():
+    """Load feature column names and sequence length; provide safe defaults if missing."""
+    try:
+        cfg_path = os.path.join(project_root, 'outputs', 'config.json')
+        if os.path.exists(cfg_path):
+            with open(cfg_path, 'r') as f:
+                cfg = json.load(f)
+            feature_cols = cfg.get('feature_cols') or []
+            n_features = int(cfg.get('n_features') or len(feature_cols) or 20)
+            seq_len = int(cfg.get('sequence_length') or 24)
+            return feature_cols, n_features, seq_len
+    except Exception:
+        pass
+    # Fallback
+    return [], 20, 24
+
+
+def _vector_from_patient(patient_dict, feature_cols, input_size):
+    """Map patient_dict to a fixed-length feature vector in the order of feature_cols or use a compact default order."""
+    if feature_cols and len(feature_cols) >= input_size:
+        values = []
+        for name in feature_cols[:input_size]:
+            # Accept multiple key variants
+            key_options = [name, name.lower(), name.replace(' ', '_').lower()]
+            val = None
+            for k in key_options:
+                if k in patient_dict:
+                    val = patient_dict[k]
+                    break
+                if k in patient_dict.get('vital_signs', {}):
+                    val = patient_dict['vital_signs'][k]
+                    break
+                if k in patient_dict.get('lab_values', {}):
+                    val = patient_dict['lab_values'][k]
+                    break
+            if val is None:
+                # Sensible defaults
+                defaults = {
+                    'HR': 80, 'O2Sat': 95, 'Temp': 37.0, 'SBP': 120, 'MAP': 75, 'DBP': 80,
+                    'Resp': 16, 'Lactate': 1.5, 'WBC': 8.0, 'Creatinine': 1.0, 'Bilirubin_total': 1.0
+                }
+                val = defaults.get(name, 0.0)
+            values.append(float(val))
+        vec = np.array(values, dtype=float)
+    else:
+        # Compact default feature order matching typical 20-feature demo
+        fields = [
+            'heart_rate','oxygen_saturation','temperature','sbp','map','dbp','respiratory_rate',
+            'base_excess','hco3','fio2','ph','paco2','sao2','wbc','platelets','creatinine','bilirubin_total','lactate','age','gender'
+        ]
+        defaults = {
+            'heart_rate': 80, 'oxygen_saturation': 95, 'temperature': 37.0, 'sbp': 120, 'map': 75, 'dbp': 80,
+            'respiratory_rate': 16, 'base_excess': 0, 'hco3': 24, 'fio2': 21, 'ph': 7.4, 'paco2': 40, 'sao2': 95,
+            'wbc': 8.0, 'platelets': 250, 'creatinine': 1.0, 'bilirubin_total': 1.0, 'lactate': 1.5, 'age': 65, 'gender': 0
+        }
+        values = []
+        for f in fields[:input_size]:
+            values.append(float(patient_dict.get(f, defaults.get(f, 0.0))))
+        # Pad or trim to input_size
+        if len(values) < input_size:
+            values += [0.0] * (input_size - len(values))
+        vec = np.array(values[:input_size], dtype=float)
+    return vec
+
+
+def _build_sequence(patient_dict, feature_cols, input_size, seq_len):
+    """Construct a simple sequence by repeating the current vector with a tiny trend; build masks."""
+    base_vec = _vector_from_patient(patient_dict, feature_cols, input_size)
+    # Create minor temporal variation to avoid degenerate patterns
+    seq = []
+    for t in range(seq_len):
+        noise = (t - seq_len // 2) * 0.001
+        seq.append(base_vec + noise)
+    features = np.stack(seq, axis=0)
+    masks = ~np.isnan(features)
+    return features, masks
+
+
+def _try_model(model_key, input_size):
+    """Instantiate ModelInference if checkpoint exists; return None otherwise."""
+    ckpt = os.path.join(project_root, 'outputs', 'models', f"{model_key}_demo_model.pt")
+    if not os.path.exists(ckpt):
+        return None
+    # Try given input_size, then common fallback 20
+    for ins in [input_size, 20]:
+        try:
+            return ModelInference(model_path=ckpt, model_type=model_key, input_size=ins)
+        except Exception:
+            continue
+    return None
+
+
+def generate_dl_model_predictions(patient_dict):
+    """Generate predictions using available DL checkpoints; raise if none loadable."""
+    feature_cols, n_features, seq_len = _load_feature_config()
+    available = {}
+    for key in ['grud','lstm','cnn_lstm','transformer']:
+        mi = _try_model(key, n_features)
+        if mi is not None:
+            available[key] = mi
+    if not available:
+        raise RuntimeError("No DL checkpoints available to load")
+    # Use the first model to determine expected input size
+    any_model = next(iter(available.values()))
+    input_size = any_model.input_size
+    features, masks = _build_sequence(patient_dict, feature_cols, input_size, seq_len)
+    results = {}
+    for key, mi in available.items():
+        try:
+            pred = mi.predict(features, masks)
+            prob = float(pred.get('calibrated_probability', pred.get('raw_probability', 0.5)))
+            results[key] = {
+                'risk_score': prob,
+                'risk_level': pred.get('risk_level','Medium'),
+                'confidence': float(1.0 - abs(prob - 0.5) * 2.0) * 0.5 + 0.5  # heuristic
+            }
+        except Exception as e:
+            print(f"Prediction failed for {key}: {e}")
+    if not results:
+        raise RuntimeError("DL predictions failed")
+    return results
 def generate_feature_importance_from_dict(patient_dict):
     """Generate feature importance from patient dictionary"""
     importance = []
