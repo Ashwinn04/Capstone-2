@@ -144,18 +144,39 @@ def load_preprocessed_data(data_path: str) -> Tuple[pd.DataFrame, List[str]]:
         print(f"Loaded data shape: {data.shape}")
         print(f"Columns: {list(data.columns)}")
         
+        # Handle different column name formats
+        # Rename columns to standard format if needed
+        column_mapping = {}
+        if 'Hour' in data.columns and 'Time' not in data.columns:
+            column_mapping['Hour'] = 'Time'
+        if 'SepsisLabel' in data.columns and 'Sepsis_Label' not in data.columns:
+            column_mapping['SepsisLabel'] = 'Sepsis_Label'
+        
+        if column_mapping:
+            data = data.rename(columns=column_mapping)
+            print(f"Renamed columns: {column_mapping}")
+        
         # Get feature columns (exclude metadata columns)
-        metadata_cols = ['Patient_ID', 'Time', 'Sepsis_Label']
+        metadata_cols = ['Patient_ID', 'Time', 'Sepsis_Label', 'Unnamed: 0']
         feature_cols = [col for col in data.columns if col not in metadata_cols]
         
         print(f"Number of features: {len(feature_cols)}")
         print(f"Unique patients: {data['Patient_ID'].nunique()}")
-        print(f"Class distribution: {data['Sepsis_Label'].value_counts()}")
+        print(f"Class distribution:")
+        print(data['Sepsis_Label'].value_counts())
+        print(f"Percentage:")
+        print(data['Sepsis_Label'].value_counts(normalize=True) * 100)
         
         return data, feature_cols
         
     except FileNotFoundError:
         print(f"Data file not found at {data_path}")
+        print("Creating sample data for testing...")
+        return create_sample_data()
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        import traceback
+        traceback.print_exc()
         print("Creating sample data for testing...")
         return create_sample_data()
 
