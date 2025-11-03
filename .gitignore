@@ -108,8 +108,6 @@ dmypy.json
 *.log
 *.csv
 *.json
-outputs/
-models/
 data/
 logs/
 temp/
