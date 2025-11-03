@@ -130,7 +130,8 @@ class SepsisPredictionIntegration:
                 if os.path.exists(path):
                     # Load PyTorch model
                     import torch
-                    self.deep_learning_models[name] = torch.load(path, map_location='cpu')
+                    # Allow full model load (we saved full model objects)
+                    self.deep_learning_models[name] = torch.load(path, map_location='cpu', weights_only=False)
                     print(f"✅ Loaded {name}")
                 else:
                     print(f"⚠️ {name} not found at {path}")
