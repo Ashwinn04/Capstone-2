@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 # Add project root to path
 project_root = '/Users/ashwinnair/Downloads/Capstone 2'
 sys.path.append(project_root)
-from Capstone.integration import ModelInference
+from integration_real import get_integration_system
 
 # Page configuration
 st.set_page_config(
@@ -102,8 +102,24 @@ def generate_patient_data(df, patient_id):
     # Generate risk trajectory (last 24 hours)
     risk_trajectory = generate_risk_trajectory(patient_data)
     
-    # Generate model predictions
-    model_predictions = generate_model_predictions(latest_record)
+    # Generate model predictions (integration baseline + DL when available)
+    model_predictions = {}
+    try:
+        system = get_integration_system()
+        # Use dict for compatibility
+        latest_dict = latest_record.to_dict()
+        baseline_preds = system.predict_baseline_models(latest_dict)
+        dl_preds = system.predict_deep_learning_models(latest_dict)
+        if baseline_preds:
+            model_predictions.update(baseline_preds)
+        if dl_preds:
+            model_predictions.update(dl_preds)
+    except Exception as e:
+        print(f"Integration predictions failed (dataset path): {e}")
+    
+    # Fallback to heuristic predictions if integration returned nothing
+    if not model_predictions:
+        model_predictions = generate_model_predictions(latest_record)
     
     # Calculate ensemble prediction
     ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values()])
@@ -613,7 +629,7 @@ def show_model_predictions(risk_data):
     # Create comparison chart
     models = list(predictions.keys())
     scores = [predictions[model]['risk_score'] for model in models]
-    confidences = [predictions[model]['confidence'] for model in models]
+    confidences = [predictions[model].get('confidence', 0.75) for model in models]
     
     # Model comparison chart
     fig = go.Figure()
@@ -622,7 +638,6 @@ def show_model_predictions(risk_data):
         name='Risk Score',
         x=models,
         y=scores,
-        marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'],
         text=[f"{score:.3f}" for score in scores],
         textposition='auto'
     ))
@@ -1534,11 +1549,20 @@ def generate_patient_data_from_dict(patient_dict):
         # Calculate clinical risk
         clinical_risk = calculate_clinical_risk(patient_dict)
         
-        # Generate model predictions (prefer deep learning checkpoints, fallback to classical, then simplified)
+        # Generate model predictions using integration (baseline + DL). Fallbacks preserved.
+        model_predictions = {}
         try:
-            model_predictions = generate_dl_model_predictions(patient_dict)
+            system = get_integration_system()
+            baseline_preds = system.predict_baseline_models(patient_dict)
+            dl_preds = system.predict_deep_learning_models(patient_dict)
+            if baseline_preds:
+                model_predictions.update(baseline_preds)
+            if dl_preds:
+                model_predictions.update(dl_preds)
         except Exception as e:
-            print(f"DL model prediction failed: {e}")
+            print(f"Integration predictions failed (manual path): {e}")
+        
+        if not model_predictions:
             try:
                 model_predictions = generate_real_model_predictions(patient_dict)
             except Exception as e2:
@@ -1797,49 +1821,14 @@ def _build_sequence(patient_dict, feature_cols, input_size, seq_len):
     return features, masks
 
 
-def _try_model(model_key, input_size):
-    """Instantiate ModelInference if checkpoint exists; return None otherwise."""
-    ckpt = os.path.join(project_root, 'outputs', 'models', f"{model_key}_demo_model.pt")
-    if not os.path.exists(ckpt):
-        return None
-    # Try given input_size, then common fallback 20
-    for ins in [input_size, 20]:
-        try:
-            return ModelInference(model_path=ckpt, model_type=model_key, input_size=ins)
-        except Exception:
-            continue
-    return None
-
-
 def generate_dl_model_predictions(patient_dict):
-    """Generate predictions using available DL checkpoints; raise if none loadable."""
-    feature_cols, n_features, seq_len = _load_feature_config()
-    available = {}
-    for key in ['grud','lstm','cnn_lstm','transformer']:
-        mi = _try_model(key, n_features)
-        if mi is not None:
-            available[key] = mi
-    if not available:
-        raise RuntimeError("No DL checkpoints available to load")
-    # Use the first model to determine expected input size
-    any_model = next(iter(available.values()))
-    input_size = any_model.input_size
-    features, masks = _build_sequence(patient_dict, feature_cols, input_size, seq_len)
-    results = {}
-    for key, mi in available.items():
-        try:
-            pred = mi.predict(features, masks)
-            prob = float(pred.get('calibrated_probability', pred.get('raw_probability', 0.5)))
-            results[key] = {
-                'risk_score': prob,
-                'risk_level': pred.get('risk_level','Medium'),
-                'confidence': float(1.0 - abs(prob - 0.5) * 2.0) * 0.5 + 0.5  # heuristic
-            }
-        except Exception as e:
-            print(f"Prediction failed for {key}: {e}")
-    if not results:
-        raise RuntimeError("DL predictions failed")
-    return results
+    """Generate predictions using integration_real's deep learning models."""
+    try:
+        system = get_integration_system()
+        preds = system.predict_deep_learning_models(patient_dict)
+        return preds
+    except Exception as e:
+        raise RuntimeError(f"DL predictions failed via integration_real: {e}")
 def generate_feature_importance_from_dict(patient_dict):
     """Generate feature importance from patient dictionary"""
     importance = []

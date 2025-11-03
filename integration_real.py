@@ -136,14 +136,14 @@ class SepsisPredictionIntegration:
                 else:
                     print(f"⚠️ {name} not found at {path}")
             
-            # If no models found, create dummy models for demo
+            # If no models found, do not create dummies; keep DL disabled
             if not self.deep_learning_models:
-                print("📝 Creating demo deep learning models...")
-                self._create_demo_deep_learning_models()
+                print("⚠️ No deep learning models found; DL predictions will be disabled.")
                 
         except Exception as e:
             print(f"⚠️ Error loading deep learning models: {e}")
-            self._create_demo_deep_learning_models()
+            # Do not fallback to dummies; disable DL
+            self.deep_learning_models = {}
     
     def _create_demo_deep_learning_models(self):
         """Create demo deep learning models for demonstration"""
@@ -262,6 +262,10 @@ class SepsisPredictionIntegration:
         """Get predictions from Person C's deep learning models"""
         predictions = {}
         
+        # If no DL models are loaded, return empty to signal "no DL available"
+        if not self.deep_learning_models:
+            return predictions
+        
         try:
             # Preprocess data
             X_processed, features = self.preprocess_patient_data(patient_data)
@@ -277,18 +281,12 @@ class SepsisPredictionIntegration:
                         predictions[name] = pred
                     else:
                         # Fallback for dummy models
-                        predictions[name] = {
-                            'risk_score': np.random.uniform(0.1, 0.9),
-                            'risk_level': 'High' if np.random.random() > 0.7 else 'Medium' if np.random.random() > 0.3 else 'Low',
-                            'confidence': np.random.uniform(0.6, 0.9)
-                        }
+                        # No dummy fallback: skip this model if unsupported
+                        continue
                 except Exception as e:
                     print(f"⚠️ Error with {name}: {e}")
-                    predictions[name] = {
-                        'risk_score': 0.5,
-                        'risk_level': 'Medium',
-                        'confidence': 0.5
-                    }
+                    # Skip failed model without inserting dummy results
+                    continue
         
         except Exception as e:
             print(f"❌ Error in deep learning predictions: {e}")
