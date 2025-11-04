@@ -93,14 +93,13 @@ class SepsisPredictionIntegration:
                 else:
                     print(f"⚠️ {name} not found at {path}")
             
-            # If no models found, create dummy models for demo
+            # If no classic baseline pickles, skip creating any demo models
             if not self.baseline_models:
-                print("📝 Creating demo baseline models...")
-                self._create_demo_baseline_models()
+                print("ℹ️ No classic baseline pickles present; skipping LR/RF/XGB.")
                 
         except Exception as e:
             print(f"⚠️ Error loading baseline models: {e}")
-            self._create_demo_baseline_models()
+            # Do not create demo baselines
 
     def _load_hgb_pipeline(self):
         """Load HGB (Person B) artifacts: feature list, imputer, scaler, classifier."""
@@ -157,7 +156,7 @@ class SepsisPredictionIntegration:
             'lstm': os.path.join(project_root, 'outputs', 'models', 'lstm_demo_model.pt'),
             'cnn_lstm': os.path.join(project_root, 'outputs', 'models', 'cnn_lstm_demo_model.pt'),
             'transformer': os.path.join(project_root, 'outputs', 'models', 'transformer_demo_model.pt')
-        }
+            }
         available = {}
         for name, path in model_paths.items():
             if os.path.exists(path):
@@ -202,15 +201,13 @@ class SepsisPredictionIntegration:
                     self.scaler = pickle.load(f)
                 print("✅ Loaded scaler")
             else:
-                # Create dummy scaler
-                from sklearn.preprocessing import StandardScaler
-                self.scaler = StandardScaler()
-                print("📝 Created demo scaler")
+                # No global scaler available
+                self.scaler = None
+                print("ℹ️ No global scaler found; skipping scaling.")
                 
         except Exception as e:
             print(f"⚠️ Error loading preprocessing: {e}")
-            from sklearn.preprocessing import StandardScaler
-            self.scaler = StandardScaler()
+            self.scaler = None
     
     def preprocess_patient_data(self, patient_data):
         """Preprocess patient data using Person A's methods"""
@@ -221,16 +218,29 @@ class SepsisPredictionIntegration:
             else:
                 df = patient_data.copy()
             
-            # Handle missing values (Person A's imputation)
-            df = df.fillna(df.median())
+            # Drop IDs / text columns if present
+            df = df.drop(columns=['Patient_ID', 'patient_id', 'RecordID', 'Unnamed: 0'], errors='ignore')
+
+            # Encode gender columns if present (Male->1, Female/Other->0)
+            if 'Gender' in df.columns and df['Gender'].dtype == object:
+                df['Gender'] = df['Gender'].map({'Male': 1, 'Female': 0, 'Other': 0}).fillna(0).astype(float)
+            if 'gender' in df.columns and df['gender'].dtype == object:
+                df['gender'] = df['gender'].map({'Male': 1, 'Female': 0, 'Other': 0}).fillna(0).astype(float)
             
             # Select relevant features
             available_features = [col for col in self.feature_names if col in df.columns]
-            df_features = df[available_features]
+            df_features = df[available_features].copy()
+
+            # Coerce all to numeric and impute with median
+            df_features = df_features.apply(pd.to_numeric, errors='coerce')
+            df_features = df_features.fillna(df_features.median(numeric_only=True))
             
-            # Scale features
-            if self.scaler is not None:
-                df_features_scaled = self.scaler.fit_transform(df_features)
+            # Scale only if a fitted scaler is available; do not fit here
+            if self.scaler is not None and hasattr(self.scaler, 'transform'):
+                try:
+                    df_features_scaled = self.scaler.transform(df_features)
+                except Exception:
+                    df_features_scaled = df_features.values
             else:
                 df_features_scaled = df_features.values
             
@@ -272,9 +282,6 @@ class SepsisPredictionIntegration:
                         'confidence': 0.5
                     }
             
-            # Calculate clinical scores
-            predictions['clinical_scores'] = self._calculate_clinical_scores(patient_data)
-
             # Add HGB prediction if pipeline is available
             hgb_pred = self._predict_hgb(patient_data)
             if hgb_pred is not None:
@@ -371,9 +378,23 @@ class SepsisPredictionIntegration:
             'respiratory_rate': 16, 'base_excess': 0, 'hco3': 24, 'fio2': 21, 'ph': 7.4, 'paco2': 40, 'sao2': 95,
             'wbc': 8.0, 'platelets': 250, 'creatinine': 1.0, 'bilirubin_total': 1.0, 'lactate': 1.5, 'age': 65, 'gender': 0
         }
+        def _coerce_value(name, value):
+            # Map gender strings; zero out non-numeric
+            if name == 'gender':
+                if isinstance(value, str):
+                    return float({'male': 1, 'female': 0, 'other': 0}.get(value.lower(), 0))
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
         base = []
         for key in default_order[:n_features]:
-            base.append(float(patient_data.get(key, defaults.get(key, 0.0))) if isinstance(patient_data, dict) else 0.0)
+            if isinstance(patient_data, dict):
+                val = patient_data.get(key, defaults.get(key, 0.0))
+                base.append(_coerce_value(key, val))
+            else:
+                base.append(0.0)
         if len(base) < n_features:
             base += [0.0] * (n_features - len(base))
         vec = np.array(base[:n_features], dtype=float)
