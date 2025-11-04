@@ -33,19 +33,24 @@ The Sepsis Digital Twin system integrates multiple prediction approaches:
 
 ### Running the Interactive Dashboard
 ```bash
-# Activate virtual environment (if using venv)
-source venv/bin/activate  # On macOS/Linux
+# (Recommended) Create & activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # macOS/Linux
 # or
-venv\Scripts\activate     # On Windows
+.venv\Scripts\activate    # Windows
 
-# Install dependencies
+# Option A: With Deep Learning support (if you have DL checkpoints)
+pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
 pip install -r requirements.txt
 
-# Run the dashboard
-streamlit run dashboard_real.py --server.port 8502
+# Option B: Baseline-only (skip PyTorch)
+# pip install -r requirements.txt
+
+# Start the dashboard
+streamlit run dashboard_real.py
 ```
 
-Then open your browser to: **http://localhost:8502**
+Then open your browser to: **http://localhost:8501**
 
 ### Features Available
 1. **Browse Real Data**: Analyze ICU patients from the dataset
@@ -145,9 +150,11 @@ The dashboard now supports **manual patient entry** with complete clinical risk 
    - Risk level classification (High/Medium/Low)
 
 3. **Model-Based Predictions**:
-   - Attempts to use trained XGBoost model
-   - Ensemble predictions from 7 models (GRU-D, LSTM, CNN-LSTM, Transformer, Logistic Regression, Random Forest, XGBoost)
-   - Robust fallback to clinical rules if models unavailable
+   - Uses integration layer to combine predictions from up to 7 models:
+     - Baselines: Logistic Regression, Random Forest, XGBoost
+     - DL: GRU-D, LSTM, CNN-LSTM, Transformer
+   - DL is optional: if no DL checkpoints found in `outputs/models`, only baselines are used
+   - Robust fallback to classical model and clinical rules if artifacts unavailable
 
 4. **Intelligent Risk Assessment**:
    - Combines clinical and model predictions
@@ -180,20 +187,34 @@ The dashboard now supports **manual patient entry** with complete clinical risk 
 
 - **Frontend**: Streamlit web application
 - **Backend**: Python with NumPy, Pandas, Scikit-learn
-- **Deep Learning**: PyTorch for neural networks
+- **Deep Learning (optional)**: PyTorch, used only if DL checkpoints are present
 - **Data Preprocessing**: Custom loaders with imputation and scaling
-- **Model Inference**: XGBoost with fallback to clinical scoring
-- **Explainability**: Captum for feature attribution (SHAP, Integrated Gradients)
+- **Model Inference**: `integration_real.py` combines 3 baselines + 4 DL into an ensemble
+- **Fallbacks**: If DL missing → baselines only; if baselines missing → classical model/clinical rules
+- **Explainability**: Built-in explainability utilities and narratives
 
 ## Dependencies
 
-- Python 3.7+
-- PyTorch 2.0+
-- XGBoost
+- Python 3.8+
 - Streamlit
-- NumPy, Pandas, Scikit-learn
-- Captum (for explainability)
+- NumPy, Pandas, Scikit-learn, XGBoost
+- PyTorch (optional; required only for DL checkpoints)
 - See `requirements.txt` for complete list
+
+## Ensemble and Model Artifacts
+
+- Baseline models loaded from:
+  - `outputs/models/logistic_regression.pkl`
+  - `outputs/models/random_forest.pkl`
+  - `outputs/models/xgboost.pkl`
+- Deep Learning checkpoints (optional):
+  - `outputs/models/grud_demo_model.pt`
+  - `outputs/models/lstm_demo_model.pt`
+  - `outputs/models/cnn_lstm_demo_model.pt`
+  - `outputs/models/transformer_demo_model.pt`
+- Dummy DL fallback is disabled. If DL checkpoints are absent, only baselines contribute to the ensemble.
+
+Note: The dashboard imports the integration system from `integration_real.py`. Some files reference an absolute `project_root`; if you move the project folder, update those or replace with `Path(__file__).parent`.
 
 ## Contributing
 

@@ -30,37 +30,36 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    /* Hide Streamlit default footer/menu */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    /* Modern header */
     .main-header {
-        font-size: 2.5rem;
-        color: #1f77b4;
+        font-size: 2.2rem;
         text-align: center;
-        margin-bottom: 2rem;
+        margin: 0 0 1.25rem 0;
+        font-weight: 700;
+        color: #0f172a;
     }
-    .metric-card {
-        background-color: #f0f2f6;
+    .banner {
+        background: linear-gradient(90deg, #e3f2fd 0%, #f5f7ff 100%);
+        padding: 18px 24px;
+        border-radius: 12px;
+        border: 1px solid #e6ecf5;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        margin-bottom: 16px;
+    }
+    .metric-card, .patient-card {
+        background: #ffffff;
         padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
+        border-radius: 12px;
+        border: 1px solid #eef2f7;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     }
-    .risk-high {
-        color: #d62728;
-        font-weight: bold;
-    }
-    .risk-medium {
-        color: #ff7f0e;
-        font-weight: bold;
-    }
-    .risk-low {
-        color: #2ca02c;
-        font-weight: bold;
-    }
-    .patient-card {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border: 1px solid #dee2e6;
-        margin: 0.5rem 0;
-    }
+    .risk-high { color: #d62728; font-weight: 700; }
+    .risk-medium { color: #ff7f0e; font-weight: 700; }
+    .risk-low { color: #2ca02c; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -2129,12 +2128,7 @@ def main():
     with tab9:
         show_fairness_analysis()
     
-    # Footer
-    st.markdown("---")
-    st.markdown(
-        "**Sepsis Digital Twin Dashboard** | Real Data Integration | "
-        "Powered by Deep Learning Models | Person D Implementation"
-    )
+    # Footer removed per request
 
 if __name__ == "__main__":
     main()
