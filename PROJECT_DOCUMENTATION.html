@@ -178,6 +178,37 @@
         </div>
       </details>
     </section>
+    <section id="results" class="section doc-section">
+      <details open>
+        <summary>Results — Model Performance (Real Dataset)</summary>
+        <div class="content">
+          <h3>Validation AUROC (12 epochs, patient-wise split)</h3>
+          <ul>
+            <li><strong>GRU-D</strong>: 0.8319</li>
+            <li><strong>LSTM</strong>: 0.8401</li>
+            <li><strong>CNN_LSTM</strong>: 0.6968</li>
+            <li><strong>Transformer</strong>: 0.8296</li>
+          </ul>
+          <h3>Test Accuracy (threshold = 0.5)</h3>
+          <ul>
+            <li><strong>GRU-D</strong>: 86.69%</li>
+            <li><strong>LSTM</strong>: 86.68%</li>
+            <li><strong>CNN_LSTM</strong>: 95.71%</li>
+            <li><strong>Transformer</strong>: 69.25%</li>
+          </ul>
+          <p class="warn">Note: Dataset positive rate ≈ 2.17%. Accuracy can be inflated under heavy class imbalance; AUROC is the preferred comparator.</p>
+          <h3>How to reproduce</h3>
+          <pre><code data-lang="bash"># Train all deep learning models on Dataset.csv
+source venv/bin/activate
+MPLBACKEND=Agg MPLCONFIGDIR=outputs/mplconfig XDG_CACHE_HOME=outputs/cache \
+  python train_models.py --data_path Dataset.csv --epochs 12 --batch_size 64 --models all
+
+# Compute test-set accuracy for each model
+python evaluate_accuracy.py</code></pre>
+          <p>Artifacts are written to <code>outputs/models/</code> (checkpoints), <code>outputs/results/</code> (JSON metrics), and <code>outputs/figures/</code> (training curves).</p>
+        </div>
+      </details>
+    </section>
     <section id="quick-start" class="section doc-section">
       <details open>
         <summary>2) Quick Start Guide</summary>
@@ -360,6 +391,7 @@ async def predict_sepsis(patient_data: PatientData, background_tasks: Background
           <ul>
             <li><strong>Class</strong>: <code>SepsisPredictionIntegration</code> loads/creates baseline & DL models, preprocessing, and scoring.</li>
             <li><strong>Ensemble</strong>: Combines individual model risk into overall risk + recommendation.</li>
+            <li><strong>Model loading</strong>: Updated to load full PyTorch model objects with <code>torch.load(..., weights_only=False)</code> to use the trained checkpoints in <code>outputs/models/</code>.</li>
           </ul>
           <pre><code data-lang="python">def get_comprehensive_prediction(self, patient_data):
     baseline = self.predict_baseline_models(patient_data)

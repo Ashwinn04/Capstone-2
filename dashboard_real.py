@@ -15,8 +15,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Add project root to path
-project_root = '/Users/ashwinnair/Downloads/Capstone 2'
-sys.path.append(project_root)
+# Use a relative path to make it more portable
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
 from integration_real import get_integration_system
 
 # Page configuration
@@ -63,7 +64,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data
+@st.cache_resource
 def load_real_data():
     """Load real ICU data from Person A"""
     try:
@@ -78,6 +79,49 @@ def load_real_data():
         st.error(f"❌ Error loading data: {e}")
         return None
 
+@st.cache_resource
+def get_model_artifacts(model_name: str, seed: int):
+    """Load model, config, threshold, and calibrator for a given model and seed."""
+    base_path = os.path.join(project_root, 'outputs', 'models', f"{model_name}_seed{seed}")
+    
+    if not os.path.exists(f'{base_path}.pt'):
+        return None, None, None, None
+        
+    try:
+        # Load config
+        with open(f'{base_path}_config.json', 'r') as f:
+            config = json.load(f)
+        
+        # Load model
+        model_class_name = config.get('model_name').lower()
+        
+        if model_class_name == 'grud':
+            from models.grud import GRUD as model_class
+        elif model_class_name == 'lstm':
+            from models.lstm import LSTM as model_class
+        elif model_class_name == 'cnn_lstm':
+            from models.cnn_lstm import CNNLSTM as model_class
+        elif model_class_name == 'transformer':
+            from models.transformer import Transformer as model_class
+        else:
+            raise ImportError(f"Unknown model class {model_class_name}")
+
+        model = model_class(**config['model_kwargs'])
+        model.load_state_dict(torch.load(f'{base_path}.pt', map_location='cpu'))
+        
+        # Load threshold
+        with open(f'{base_path}_threshold.json', 'r') as f:
+            threshold = json.load(f)['threshold_r85']
+            
+        # Load calibrator
+        from explainability_utils.calibration import ModelCalibrator
+        calibrator = ModelCalibrator.load(f'{base_path}_calibrator.joblib', method='platt')
+        
+        return model, config, threshold, calibrator
+    except Exception as e:
+        print(f"Error loading artifacts for {model_name} seed {seed}: {e}")
+        return None, None, None, None
+
 def generate_patient_data(df, patient_id):
     """Generate realistic patient data from the real dataset"""
     if df is None:
@@ -90,39 +134,38 @@ def generate_patient_data(df, patient_id):
         # Generate sample data if patient not found
         return generate_sample_patient_data(patient_id)
     
-    # Get the latest record for this patient
-    latest_record = patient_data.iloc[-1]
+    # --- Integration with trained models ---
+    system = get_integration_system(
+        model_dir=os.path.join(project_root, 'outputs', 'models'),
+        cache_dir=os.path.join(project_root, 'outputs', 'cache')
+    )
     
-    # Calculate clinical scores
+    # Prepare sequence for prediction
+    # This is a simplified version; in a real scenario, you'd fetch the last N hours of data
+    sequence_df = patient_data.tail(48) # Use last 48 hours
+    
+    # Get predictions
+    try:
+        model_predictions = system.predict_all_models_for_sequence(sequence_df)
+    except Exception as e:
+        st.warning(f"Failed to get new model predictions: {e}")
+        model_predictions = generate_model_predictions(patient_data.iloc[-1])
+
+    # Calculate ensemble prediction
+    if model_predictions:
+        ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values() if 'risk_score' in pred])
+        ensemble_level = get_risk_level(ensemble_score)
+    else:
+        ensemble_score = 0.0
+        ensemble_level = "Low"
+
+    latest_record = patient_data.iloc[-1]
     sirs_score = calculate_sirs_score(latest_record)
     qsofa_score = calculate_qsofa_score(latest_record)
     sofa_score = calculate_sofa_score(latest_record)
     
-    # Generate risk trajectory (last 24 hours)
+    # Generate risk trajectory (last 24 hours) - can be enhanced with real historical preds
     risk_trajectory = generate_risk_trajectory(patient_data)
-    
-    # Generate model predictions (integration baseline + DL when available)
-    model_predictions = {}
-    try:
-        system = get_integration_system()
-        # Use dict for compatibility
-        latest_dict = latest_record.to_dict()
-        baseline_preds = system.predict_baseline_models(latest_dict)
-        dl_preds = system.predict_deep_learning_models(latest_dict)
-        if baseline_preds:
-            model_predictions.update(baseline_preds)
-        if dl_preds:
-            model_predictions.update(dl_preds)
-    except Exception as e:
-        print(f"Integration predictions failed (dataset path): {e}")
-    
-    # Fallback to heuristic predictions if integration returned nothing
-    if not model_predictions:
-        model_predictions = generate_model_predictions(latest_record)
-    
-    # Calculate ensemble prediction
-    ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values()])
-    ensemble_level = 'High' if ensemble_score > 0.7 else 'Medium' if ensemble_score > 0.3 else 'Low'
     
     return {
         'patient_id': patient_id,
