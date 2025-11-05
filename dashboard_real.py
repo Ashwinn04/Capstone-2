@@ -15,10 +15,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Add project root to path
-# Use a relative path to make it more portable
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, project_root)
-from integration_real import get_integration_system
+project_root = '/Users/ashwinnair/Downloads/Capstone 2'
+sys.path.append(project_root)
 
 # Page configuration
 st.set_page_config(
@@ -31,40 +29,41 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
-    /* Hide Streamlit default footer/menu */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-
-    /* Modern header */
     .main-header {
-        font-size: 2.2rem;
+        font-size: 2.5rem;
+        color: #1f77b4;
         text-align: center;
-        margin: 0 0 1.25rem 0;
-        font-weight: 700;
-        color: #0f172a;
+        margin-bottom: 2rem;
     }
-    .banner {
-        background: linear-gradient(90deg, #e3f2fd 0%, #f5f7ff 100%);
-        padding: 18px 24px;
-        border-radius: 12px;
-        border: 1px solid #e6ecf5;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-        margin-bottom: 16px;
-    }
-    .metric-card, .patient-card {
-        background: #ffffff;
+    .metric-card {
+        background-color: #f0f2f6;
         padding: 1rem;
-        border-radius: 12px;
-        border: 1px solid #eef2f7;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        border-radius: 0.5rem;
+        border-left: 4px solid #1f77b4;
     }
-    .risk-high { color: #d62728; font-weight: 700; }
-    .risk-medium { color: #ff7f0e; font-weight: 700; }
-    .risk-low { color: #2ca02c; font-weight: 700; }
+    .risk-high {
+        color: #d62728;
+        font-weight: bold;
+    }
+    .risk-medium {
+        color: #ff7f0e;
+        font-weight: bold;
+    }
+    .risk-low {
+        color: #2ca02c;
+        font-weight: bold;
+    }
+    .patient-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #dee2e6;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource
+@st.cache_data
 def load_real_data():
     """Load real ICU data from Person A"""
     try:
@@ -79,49 +78,6 @@ def load_real_data():
         st.error(f"❌ Error loading data: {e}")
         return None
 
-@st.cache_resource
-def get_model_artifacts(model_name: str, seed: int):
-    """Load model, config, threshold, and calibrator for a given model and seed."""
-    base_path = os.path.join(project_root, 'outputs', 'models', f"{model_name}_seed{seed}")
-    
-    if not os.path.exists(f'{base_path}.pt'):
-        return None, None, None, None
-        
-    try:
-        # Load config
-        with open(f'{base_path}_config.json', 'r') as f:
-            config = json.load(f)
-        
-        # Load model
-        model_class_name = config.get('model_name').lower()
-        
-        if model_class_name == 'grud':
-            from models.grud import GRUD as model_class
-        elif model_class_name == 'lstm':
-            from models.lstm import LSTM as model_class
-        elif model_class_name == 'cnn_lstm':
-            from models.cnn_lstm import CNNLSTM as model_class
-        elif model_class_name == 'transformer':
-            from models.transformer import Transformer as model_class
-        else:
-            raise ImportError(f"Unknown model class {model_class_name}")
-
-        model = model_class(**config['model_kwargs'])
-        model.load_state_dict(torch.load(f'{base_path}.pt', map_location='cpu'))
-        
-        # Load threshold
-        with open(f'{base_path}_threshold.json', 'r') as f:
-            threshold = json.load(f)['threshold_r85']
-            
-        # Load calibrator
-        from explainability_utils.calibration import ModelCalibrator
-        calibrator = ModelCalibrator.load(f'{base_path}_calibrator.joblib', method='platt')
-        
-        return model, config, threshold, calibrator
-    except Exception as e:
-        print(f"Error loading artifacts for {model_name} seed {seed}: {e}")
-        return None, None, None, None
-
 def generate_patient_data(df, patient_id):
     """Generate realistic patient data from the real dataset"""
     if df is None:
@@ -134,38 +90,23 @@ def generate_patient_data(df, patient_id):
         # Generate sample data if patient not found
         return generate_sample_patient_data(patient_id)
     
-    # --- Integration with trained models ---
-    system = get_integration_system(
-        model_dir=os.path.join(project_root, 'outputs', 'models'),
-        cache_dir=os.path.join(project_root, 'outputs', 'cache')
-    )
-    
-    # Prepare sequence for prediction
-    # This is a simplified version; in a real scenario, you'd fetch the last N hours of data
-    sequence_df = patient_data.tail(48) # Use last 48 hours
-    
-    # Get predictions
-    try:
-        model_predictions = system.predict_all_models_for_sequence(sequence_df)
-    except Exception as e:
-        st.warning(f"Failed to get new model predictions: {e}")
-        model_predictions = generate_model_predictions(patient_data.iloc[-1])
-
-    # Calculate ensemble prediction
-    if model_predictions:
-        ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values() if 'risk_score' in pred])
-        ensemble_level = get_risk_level(ensemble_score)
-    else:
-        ensemble_score = 0.0
-        ensemble_level = "Low"
-
+    # Get the latest record for this patient
     latest_record = patient_data.iloc[-1]
+    
+    # Calculate clinical scores
     sirs_score = calculate_sirs_score(latest_record)
     qsofa_score = calculate_qsofa_score(latest_record)
     sofa_score = calculate_sofa_score(latest_record)
     
-    # Generate risk trajectory (last 24 hours) - can be enhanced with real historical preds
+    # Generate risk trajectory (last 24 hours)
     risk_trajectory = generate_risk_trajectory(patient_data)
+    
+    # Generate model predictions
+    model_predictions = generate_model_predictions(latest_record)
+    
+    # Calculate ensemble prediction
+    ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values()])
+    ensemble_level = 'High' if ensemble_score > 0.7 else 'Medium' if ensemble_score > 0.3 else 'Low'
     
     return {
         'patient_id': patient_id,
@@ -668,16 +609,10 @@ def show_model_predictions(risk_data):
     
     predictions = risk_data['model_predictions']
     
-    # Filter only entries with a risk_score
-    filtered = {k: v for k, v in predictions.items() if isinstance(v, dict) and 'risk_score' in v}
-    if not filtered:
-        st.info("No model predictions available to display.")
-        return
-    
     # Create comparison chart
-    models = list(filtered.keys())
-    scores = [filtered[model]['risk_score'] for model in models]
-    confidences = [filtered[model].get('confidence', 0.75) for model in models]
+    models = list(predictions.keys())
+    scores = [predictions[model]['risk_score'] for model in models]
+    confidences = [predictions[model]['confidence'] for model in models]
     
     # Model comparison chart
     fig = go.Figure()
@@ -686,6 +621,7 @@ def show_model_predictions(risk_data):
         name='Risk Score',
         x=models,
         y=scores,
+        marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'],
         text=[f"{score:.3f}" for score in scores],
         textposition='auto'
     ))
@@ -707,11 +643,11 @@ def show_model_predictions(risk_data):
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Model details with confidence intervals
     st.subheader("Detailed Model Results")
-    for model, pred in filtered.items():
+    for model, pred in predictions.items():
         col1, col2, col3, col4 = st.columns(4)
         
         # Add confidence interval
@@ -725,20 +661,20 @@ def show_model_predictions(risk_data):
                 f"CI: [{ci_lower:.3f}, {ci_upper:.3f}]"
             )
         with col2:
-            st.write(f"Level: {pred.get('risk_level', 'N/A')}")
+            st.write(f"Level: {pred['risk_level']}")
         with col3:
-            st.write(f"Confidence: {pred.get('confidence', 0.0):.2f}")
+            st.write(f"Confidence: {pred['confidence']:.2f}")
         with col4:
-            status = "✅" if pred.get('confidence', 0.0) > 0.7 else "⚠️"
+            status = "✅" if pred['confidence'] > 0.7 else "⚠️"
             st.write(f"Status: {status}")
     
     # Model uncertainty visualization
     st.subheader("Model Uncertainty Analysis")
     
     # Create uncertainty plot
-    models = list(filtered.keys())
-    scores = [filtered[model]['risk_score'] for model in models]
-    confidences = [filtered[model].get('confidence', 0.0) for model in models]
+    models = list(predictions.keys())
+    scores = [predictions[model]['risk_score'] for model in models]
+    confidences = [predictions[model]['confidence'] for model in models]
     
     fig_uncertainty = go.Figure()
     
@@ -768,7 +704,7 @@ def show_model_predictions(risk_data):
         height=400
     )
     
-    st.plotly_chart(fig_uncertainty, use_container_width=True)
+    st.plotly_chart(fig_uncertainty, width='stretch')
 
 def show_risk_trajectory(risk_data):
     """Display risk trajectory over time"""
@@ -804,7 +740,7 @@ def show_risk_trajectory(risk_data):
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Risk trend analysis
     st.subheader("Risk Trend Analysis")
@@ -846,7 +782,7 @@ def show_explainability(risk_data):
         color_continuous_scale='Reds'
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Feature details
     st.subheader("Feature Details")
@@ -884,41 +820,10 @@ def show_dynamic_explainability(patient_data):
     # Generate dynamic explainability
     from explainability_utils.explainability import get_dynamic_explainability
     dynamic_data = get_dynamic_explainability(patient_data, feature_names, 24)
-
-    # Fallback: if helper fails or returns zeros, synthesize from static importance
-    def _synth_dynamic_from_static(pd_data, feat_names, hours=24):
-        # Use existing static feature importance if available, else uniform
-        static_imp = pd_data.get('feature_importance', [])
-        name_to_imp = {it.get('feature'): float(it.get('importance', 0.0)) for it in static_imp}
-        # Normalize importances to [0,1]
-        vals = np.array([name_to_imp.get(f, 0.0) for f in feat_names], dtype=float)
-        if vals.sum() > 0:
-            vals = vals / (vals.max() if vals.max() > 0 else 1.0)
-        # Modulate by risk trend (slightly increase later hours if risk rises)
-        risk_traj = pd_data.get('risk_trajectory', [])
-        rising = False
-        if len(risk_traj) >= 2:
-            rising = risk_traj[-1]['risk_score'] > risk_traj[0]['risk_score']
-        drift = np.linspace(0.95, 1.05, hours) if rising else np.linspace(1.05, 0.95, hours)
-        importance_over_time = {h: (vals * drift[h]).tolist() for h in range(hours)}
-        top_over_time = {h: sorted([(feat_names[i], importance_over_time[h][i]) for i in range(len(feat_names))],
-                                    key=lambda x: x[1], reverse=True) for h in range(hours)}
-        return {
-            'hours': list(range(hours)),
-            'feature_names': feat_names,
-            'feature_importance_over_time': importance_over_time,
-            'top_features_over_time': top_over_time
-        }
-
-    def _is_all_zero(dd):
-        try:
-            mat = np.array([dd['feature_importance_over_time'][h] for h in dd['hours']])
-            return not np.any(mat)
-        except Exception:
-            return True
-
-    if ('error' in dynamic_data) or _is_all_zero(dynamic_data):
-        dynamic_data = _synth_dynamic_from_static(patient_data, feature_names, 24)
+    
+    if 'error' in dynamic_data:
+        st.error(f"❌ {dynamic_data['error']}")
+        return
     
     # Create feature importance heatmap
     st.subheader("🔥 Feature Importance Evolution")
@@ -938,7 +843,7 @@ def show_dynamic_explainability(patient_data):
         labels={'x': 'Hour', 'y': 'Feature', 'color': 'Impact Score'}
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Top feature changes
     st.subheader("📈 Top Feature Changes")
@@ -1037,137 +942,7 @@ def show_performance_metrics():
     """Display model performance metrics"""
     st.header("📊 Model Performance Metrics")
     
-    # Try to load real comparison metrics if available
-    possible_paths = [
-        os.path.join(project_root, 'outputs', 'results', 'model_comparison.csv'),
-        os.path.join(project_root, 'Capstone', 'outputs', 'results', 'model_comparison.csv')
-    ]
-    existing_paths = [p for p in possible_paths if os.path.exists(p)]
-    csv_path = None
-    if existing_paths:
-        # Prefer the most recently modified file
-        csv_path = max(existing_paths, key=lambda p: os.path.getmtime(p))
-    
-    if csv_path is not None:
-        try:
-            df_raw = pd.read_csv(csv_path)
-            # Handle index column
-            if 'Unnamed: 0' in df_raw.columns:
-                df_raw = df_raw.rename(columns={'Unnamed: 0': 'Model'})
-            # Normalize column names
-            rename_map = {
-                'auroc': 'AUROC', 'auprc': 'AUPRC', 'accuracy': 'Accuracy',
-                'precision': 'Precision', 'recall': 'Recall', 'specificity': 'Specificity',
-                'f1_score': 'F1-Score', 'sensitivity_at_80_specificity': 'Sensitivity@80%Spec',
-                'accuracy_r85': 'Accuracy@R85', 'precision_r85': 'Precision@R85',
-                'recall_r85': 'Recall@R85', 'specificity_r85': 'Specificity@R85',
-                'f1_score_r85': 'F1-Score@R85', 'threshold_r85': 'Threshold@R85'
-            }
-            for k, v in rename_map.items():
-                if k in df_raw.columns:
-                    df_raw = df_raw.rename(columns={k: v})
-            # Ensure Model column
-            if 'Model' not in df_raw.columns:
-                df_raw.insert(0, 'Model', df_raw.index)
-            # Select key columns if present
-            cols_pref = ['Model', 'AUROC', 'AUPRC', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1-Score', 'Sensitivity@80%Spec',
-                         'Accuracy@R85', 'Precision@R85', 'Recall@R85', 'Specificity@R85', 'F1-Score@R85', 'Threshold@R85']
-            present_cols = [c for c in cols_pref if c in df_raw.columns]
-            df_metrics = df_raw[present_cols].copy()
-            
-            st.subheader("Model Performance Comparison (latest evaluation)")
-            st.caption(f"Loaded from: {os.path.relpath(csv_path, project_root)}")
-            st.dataframe(df_metrics, use_container_width=True)
-    
-            # Accuracy bar chart if available
-            if 'Accuracy' in df_metrics.columns:
-                fig_acc = px.bar(
-                    df_metrics, x='Model', y='Accuracy',
-                    title='Accuracy by Model', color='Accuracy',
-                    color_continuous_scale='Blues'
-                )
-                fig_acc.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig_acc, use_container_width=True)
-            
-            # AUROC and AUPRC if available
-            col1, col2 = st.columns(2)
-            if 'AUROC' in df_metrics.columns:
-                with col1:
-                    fig_auroc = px.bar(
-                        df_metrics, x='Model', y='AUROC',
-                        title='AUROC Comparison', color='AUROC',
-                        color_continuous_scale='Viridis'
-                    )
-                    fig_auroc.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig_auroc, use_container_width=True)
-            if 'AUPRC' in df_metrics.columns:
-                with col2:
-                    fig_auprc = px.bar(
-                        df_metrics, x='Model', y='AUPRC',
-                        title='AUPRC Comparison', color='AUPRC',
-                        color_continuous_scale='Plasma'
-                    )
-                    fig_auprc.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig_auprc, use_container_width=True)
-    
-            # Metrics at Recall=0.85 if present
-            if 'Precision@R85' in df_metrics.columns or 'Specificity@R85' in df_metrics.columns:
-                st.subheader("Operating Point: Recall ≈ 0.85")
-                c1, c2 = st.columns(2)
-                if 'Precision@R85' in df_metrics.columns:
-                    with c1:
-                        fig_p_r85 = px.bar(
-                            df_metrics, x='Model', y='Precision@R85',
-                            title='Precision @ Recall=0.85', color='Precision@R85',
-                            color_continuous_scale='Blues'
-                        )
-                        fig_p_r85.update_layout(xaxis_tickangle=-45)
-                        st.plotly_chart(fig_p_r85, use_container_width=True)
-                if 'Specificity@R85' in df_metrics.columns:
-                    with c2:
-                        fig_s_r85 = px.bar(
-                            df_metrics, x='Model', y='Specificity@R85',
-                            title='Specificity @ Recall=0.85', color='Specificity@R85',
-                            color_continuous_scale='Greens'
-                        )
-                        fig_s_r85.update_layout(xaxis_tickangle=-45)
-                        st.plotly_chart(fig_s_r85, use_container_width=True)
-            
-            # Summary metrics if present
-            available = set(df_metrics.columns)
-            if {'Model', 'AUROC'} <= available:
-                best_auroc = df_metrics.iloc[df_metrics['AUROC'].idxmax()]
-            else:
-                best_auroc = None
-            if {'Model', 'AUPRC'} <= available:
-                best_auprc = df_metrics.iloc[df_metrics['AUPRC'].idxmax()]
-            else:
-                best_auprc = None
-            if {'Model', 'F1-Score'} <= available:
-                best_f1 = df_metrics.iloc[df_metrics['F1-Score'].idxmax()]
-            else:
-                best_f1 = None
-            
-            st.subheader("Performance Summary")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if best_auroc is not None:
-                    st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
-            with col2:
-                if best_auprc is not None:
-                    st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
-            with col3:
-                if best_f1 is not None:
-                    st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
-        except Exception as e:
-            st.warning(f"Failed to load real metrics ({e}). Showing demo metrics.")
-            _show_demo_metrics()
-    else:
-        st.info("No saved evaluation found at outputs/results/model_comparison.csv. Showing demo metrics.")
-        _show_demo_metrics()
-
-def _show_demo_metrics():
-    # Performance data (placeholder)
+    # Performance data
     metrics_data = {
         'Model': ['Logistic Regression', 'Random Forest', 'XGBoost', 'GRU-D', 'LSTM', 'CNN-LSTM', 'Transformer'],
         'AUROC': [0.85, 0.87, 0.89, 0.91, 0.88, 0.90, 0.89],
@@ -1176,26 +951,56 @@ def _show_demo_metrics():
         'Specificity': [0.78, 0.81, 0.83, 0.85, 0.82, 0.84, 0.83],
         'F1-Score': [0.65, 0.68, 0.72, 0.75, 0.70, 0.73, 0.71]
     }
+    
+    # Create DataFrame
     df_metrics = pd.DataFrame(metrics_data)
-    st.subheader("Model Performance Comparison (demo)")
-    st.dataframe(df_metrics, use_container_width=True)
+    
+    # Display metrics table
+    st.subheader("Model Performance Comparison")
+    st.dataframe(df_metrics, width='stretch')
+    
+    # Create performance charts
     col1, col2 = st.columns(2)
+    
     with col1:
-        fig_auroc = px.bar(df_metrics, x='Model', y='AUROC', title='AUROC Comparison', color='AUROC', color_continuous_scale='Viridis')
+        # AUROC comparison
+        fig_auroc = px.bar(
+            df_metrics, 
+            x='Model', 
+            y='AUROC',
+            title='AUROC Comparison',
+            color='AUROC',
+            color_continuous_scale='Viridis'
+        )
         fig_auroc.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_auroc, use_container_width=True)
+        st.plotly_chart(fig_auroc, width='stretch')
+    
     with col2:
-        fig_auprc = px.bar(df_metrics, x='Model', y='AUPRC', title='AUPRC Comparison', color='AUPRC', color_continuous_scale='Plasma')
+        # AUPRC comparison
+        fig_auprc = px.bar(
+            df_metrics, 
+            x='Model', 
+            y='AUPRC',
+            title='AUPRC Comparison',
+            color='AUPRC',
+            color_continuous_scale='Plasma'
+        )
         fig_auprc.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_auprc, use_container_width=True)
+        st.plotly_chart(fig_auprc, width='stretch')
+    
+    # Performance summary
     st.subheader("Performance Summary")
+    
     col1, col2, col3 = st.columns(3)
+    
     with col1:
         best_auroc = df_metrics.loc[df_metrics['AUROC'].idxmax()]
         st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
+    
     with col2:
         best_auprc = df_metrics.loc[df_metrics['AUPRC'].idxmax()]
         st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
+    
     with col3:
         best_f1 = df_metrics.loc[df_metrics['F1-Score'].idxmax()]
         st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
@@ -1251,7 +1056,7 @@ def _show_demo_metrics():
     fig_lead_time.add_vline(x=4.5, line_dash="dash", line_color="red", 
                           annotation_text="Mean: 4.5 hours")
     
-    st.plotly_chart(fig_lead_time, use_container_width=True)
+    st.plotly_chart(fig_lead_time, width='stretch')
     
     # Lead-time statistics
     col1, col2, col3 = st.columns(3)
@@ -1314,7 +1119,7 @@ def _show_demo_metrics():
         height=600
     )
     
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_radar, width='stretch')
     
     # Radar chart interpretation
     st.info("""
@@ -1434,7 +1239,7 @@ def show_fairness_analysis():
             color_continuous_scale='Viridis'
         )
         fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Add interpretation
         max_perf = max(performance)
@@ -1628,24 +1433,11 @@ def generate_patient_data_from_dict(patient_dict):
         # Calculate clinical risk
         clinical_risk = calculate_clinical_risk(patient_dict)
         
-        # Generate model predictions using integration (baseline + DL). Fallbacks preserved.
-        model_predictions = {}
+        # Generate model predictions (try real models first, fallback to clinical)
         try:
-            system = get_integration_system()
-            baseline_preds = system.predict_baseline_models(patient_dict)
-            dl_preds = system.predict_deep_learning_models(patient_dict)
-            if baseline_preds:
-                model_predictions.update(baseline_preds)
-            if dl_preds:
-                model_predictions.update(dl_preds)
+            model_predictions = generate_real_model_predictions(patient_dict)
         except Exception as e:
-            print(f"Integration predictions failed (manual path): {e}")
-        
-        if not model_predictions:
-            try:
-                model_predictions = generate_real_model_predictions(patient_dict)
-            except Exception as e2:
-                print(f"Classical model prediction failed: {e2}")
+            print(f"Real model prediction failed: {e}")
             model_predictions = generate_simplified_predictions(patient_dict)
         
         # Calculate ensemble prediction
@@ -1821,93 +1613,6 @@ def generate_simplified_predictions(patient_dict):
     
     return model_predictions
 
-
-def _load_feature_config():
-    """Load feature column names and sequence length; provide safe defaults if missing."""
-    try:
-        cfg_path = os.path.join(project_root, 'outputs', 'config.json')
-        if os.path.exists(cfg_path):
-            with open(cfg_path, 'r') as f:
-                cfg = json.load(f)
-            feature_cols = cfg.get('feature_cols') or []
-            n_features = int(cfg.get('n_features') or len(feature_cols) or 20)
-            seq_len = int(cfg.get('sequence_length') or 24)
-            return feature_cols, n_features, seq_len
-    except Exception:
-        pass
-    # Fallback
-    return [], 20, 24
-
-
-def _vector_from_patient(patient_dict, feature_cols, input_size):
-    """Map patient_dict to a fixed-length feature vector in the order of feature_cols or use a compact default order."""
-    if feature_cols and len(feature_cols) >= input_size:
-        values = []
-        for name in feature_cols[:input_size]:
-            # Accept multiple key variants
-            key_options = [name, name.lower(), name.replace(' ', '_').lower()]
-            val = None
-            for k in key_options:
-                if k in patient_dict:
-                    val = patient_dict[k]
-                    break
-                if k in patient_dict.get('vital_signs', {}):
-                    val = patient_dict['vital_signs'][k]
-                    break
-                if k in patient_dict.get('lab_values', {}):
-                    val = patient_dict['lab_values'][k]
-                    break
-            if val is None:
-                # Sensible defaults
-                defaults = {
-                    'HR': 80, 'O2Sat': 95, 'Temp': 37.0, 'SBP': 120, 'MAP': 75, 'DBP': 80,
-                    'Resp': 16, 'Lactate': 1.5, 'WBC': 8.0, 'Creatinine': 1.0, 'Bilirubin_total': 1.0
-                }
-                val = defaults.get(name, 0.0)
-            values.append(float(val))
-        vec = np.array(values, dtype=float)
-    else:
-        # Compact default feature order matching typical 20-feature demo
-        fields = [
-            'heart_rate','oxygen_saturation','temperature','sbp','map','dbp','respiratory_rate',
-            'base_excess','hco3','fio2','ph','paco2','sao2','wbc','platelets','creatinine','bilirubin_total','lactate','age','gender'
-        ]
-        defaults = {
-            'heart_rate': 80, 'oxygen_saturation': 95, 'temperature': 37.0, 'sbp': 120, 'map': 75, 'dbp': 80,
-            'respiratory_rate': 16, 'base_excess': 0, 'hco3': 24, 'fio2': 21, 'ph': 7.4, 'paco2': 40, 'sao2': 95,
-            'wbc': 8.0, 'platelets': 250, 'creatinine': 1.0, 'bilirubin_total': 1.0, 'lactate': 1.5, 'age': 65, 'gender': 0
-        }
-        values = []
-        for f in fields[:input_size]:
-            values.append(float(patient_dict.get(f, defaults.get(f, 0.0))))
-        # Pad or trim to input_size
-        if len(values) < input_size:
-            values += [0.0] * (input_size - len(values))
-        vec = np.array(values[:input_size], dtype=float)
-    return vec
-
-
-def _build_sequence(patient_dict, feature_cols, input_size, seq_len):
-    """Construct a simple sequence by repeating the current vector with a tiny trend; build masks."""
-    base_vec = _vector_from_patient(patient_dict, feature_cols, input_size)
-    # Create minor temporal variation to avoid degenerate patterns
-    seq = []
-    for t in range(seq_len):
-        noise = (t - seq_len // 2) * 0.001
-        seq.append(base_vec + noise)
-    features = np.stack(seq, axis=0)
-    masks = ~np.isnan(features)
-    return features, masks
-
-
-def generate_dl_model_predictions(patient_dict):
-    """Generate predictions using integration_real's deep learning models."""
-    try:
-        system = get_integration_system()
-        preds = system.predict_deep_learning_models(patient_dict)
-        return preds
-    except Exception as e:
-        raise RuntimeError(f"DL predictions failed via integration_real: {e}")
 def generate_feature_importance_from_dict(patient_dict):
     """Generate feature importance from patient dictionary"""
     importance = []
@@ -2208,7 +1913,12 @@ def main():
     with tab9:
         show_fairness_analysis()
     
-    # Footer removed per request
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        "**Sepsis Digital Twin Dashboard** | Real Data Integration | "
+        "Powered by Deep Learning Models | Person D Implementation"
+    )
 
 if __name__ == "__main__":
     main()
