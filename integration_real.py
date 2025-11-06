@@ -6,15 +6,89 @@ import pandas as pd
 import numpy as np
 import pickle
 import json
-import sys
 import os
 from datetime import datetime
+from typing import Dict, List, Optional
+
+import torch
+from sklearn.exceptions import NotFittedError
+from sklearn.preprocessing import StandardScaler
+import joblib
 import warnings
+
 warnings.filterwarnings('ignore')
 
-# Add project root to path
-project_root = '/Users/ashwinnair/Downloads/Capstone 2'
-sys.path.append(project_root)
+
+class TorchModelEnsemble:
+    """Utility wrapper for averaging predictions across multiple PyTorch checkpoints."""
+
+    def __init__(self, name: str, models: List[torch.nn.Module]):
+        self.name = name
+        self.models = models
+        for model in self.models:
+            model.eval()
+            model.to('cpu')
+
+    def predict(self, features: np.ndarray, mask: Optional[np.ndarray] = None) -> Dict[str, float]:
+        """Generate an averaged risk score across ensemble members."""
+
+        if features.ndim == 2:
+            features_tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0)
+        elif features.ndim == 3:
+            features_tensor = torch.tensor(features, dtype=torch.float32)
+        else:
+            raise ValueError(f"Unexpected feature shape for {self.name}: {features.shape}")
+
+        batch_size, seq_len, num_features = features_tensor.shape
+
+        if mask is not None:
+            mask_tensor = torch.tensor(mask, dtype=torch.float32)
+            if mask_tensor.ndim == 2:
+                mask_tensor = mask_tensor.unsqueeze(0)
+            mask_tensor = mask_tensor.to(features_tensor.dtype)
+        else:
+            mask_tensor = torch.ones((batch_size, seq_len, num_features), dtype=torch.float32)
+
+        if mask_tensor.shape != features_tensor.shape:
+            mask_tensor = torch.ones_like(features_tensor)
+
+        min_seq_len = 4
+        if features_tensor.shape[1] < min_seq_len:
+            pad_length = min_seq_len - features_tensor.shape[1]
+            pad_features = features_tensor[:, -1:, :].repeat(1, pad_length, 1)
+            pad_mask = mask_tensor[:, -1:, :].repeat(1, pad_length, 1)
+            features_tensor = torch.cat([features_tensor, pad_features], dim=1)
+            mask_tensor = torch.cat([mask_tensor, pad_mask], dim=1)
+
+        batch_size, seq_len, num_features = features_tensor.shape
+
+        delta_t = torch.zeros((batch_size, seq_len, 1), dtype=torch.float32)
+
+        member_scores: List[float] = []
+        with torch.no_grad():
+            for model in self.models:
+                logits = model(features_tensor, mask_tensor, delta_t)
+                probs = torch.sigmoid(logits).cpu().numpy().flatten()
+                member_scores.extend(probs.tolist())
+
+        risk_score = float(np.mean(member_scores)) if member_scores else 0.5
+        variance = float(np.var(member_scores)) if len(member_scores) > 1 else 0.0
+        confidence = float(np.clip(1.0 - variance, 0.0, 1.0))
+
+        if risk_score >= 0.7:
+            risk_level = 'High'
+        elif risk_score >= 0.3:
+            risk_level = 'Medium'
+        else:
+            risk_level = 'Low'
+
+        return {
+            'risk_score': risk_score,
+            'risk_level': risk_level,
+            'confidence': confidence,
+            'ensemble_members': len(self.models),
+            'variance': variance
+        }
 
 class SepsisPredictionIntegration:
     """
@@ -31,8 +105,9 @@ class SepsisPredictionIntegration:
         self.deep_learning_models = {}
         self.feature_names = []
         self.scaler = None
+        self.feature_defaults: Dict[str, float] = {}
         self.is_initialized = False
-        
+
         # Initialize the system
         self._initialize_system()
     
@@ -41,17 +116,12 @@ class SepsisPredictionIntegration:
         try:
             print("🔄 Initializing Sepsis Prediction Integration System...")
             
-            # Load feature names (from Person B's work)
-            self.feature_names = [
-                'HR', 'O2Sat', 'Temp', 'SBP', 'MAP', 'DBP', 'Resp', 'EtCO2',
-                'BaseExcess', 'HCO3', 'FiO2', 'pH', 'PaCO2', 'SaO2', 'AST',
-                'BUN', 'Alkalinephos', 'Calcium', 'Chloride', 'Creatinine',
-                'Bilirubin_direct', 'Lactate', 'Magnesium', 'Phosphate',
-                'Potassium', 'Bilirubin_total', 'TroponinI', 'Hct', 'Hgb',
-                'PTT', 'WBC', 'Fibrinogen', 'Platelets', 'Age', 'Gender',
-                'Unit1', 'Unit2', 'HospAdmTime', 'ICULOS'
-            ]
-            
+            # Load feature names (from Person A/B data definitions)
+            self._determine_feature_names()
+
+            # Load default feature values from available datasets
+            self._load_feature_defaults()
+
             # Load Person B's baseline models
             self._load_baseline_models()
             
@@ -67,127 +137,214 @@ class SepsisPredictionIntegration:
         except Exception as e:
             print(f"❌ Error initializing system: {e}")
             self.is_initialized = False
-    
+
+    def _determine_feature_names(self):
+        """Determine feature names from available datasets."""
+        dataset_candidates = [
+            'Dataset.csv',
+            'sample_patients_fixed.csv',
+            'sample_patients_correct.csv',
+            'sample_patients.csv'
+        ]
+
+        metadata_columns = {'Patient_ID', 'Time', 'Sepsis_Label', 'Unnamed: 0'}
+        for path in dataset_candidates:
+            if not os.path.exists(path):
+                continue
+            try:
+                df = pd.read_csv(path, nrows=1)
+                column_mapping = {}
+                if 'Hour' in df.columns and 'Time' not in df.columns:
+                    column_mapping['Hour'] = 'Time'
+                if 'SepsisLabel' in df.columns and 'Sepsis_Label' not in df.columns:
+                    column_mapping['SepsisLabel'] = 'Sepsis_Label'
+                if column_mapping:
+                    df = df.rename(columns=column_mapping)
+
+                features = [col for col in df.columns if col not in metadata_columns]
+                if features:
+                    self.feature_names = features
+                    return
+            except Exception as exc:
+                print(f"⚠️ Unable to infer feature names from {path}: {exc}")
+
+        if not self.feature_names:
+            self.feature_names = [
+                'HR', 'O2Sat', 'Temp', 'SBP', 'MAP', 'DBP', 'Resp', 'EtCO2',
+                'BaseExcess', 'HCO3', 'FiO2', 'pH', 'PaCO2', 'SaO2', 'AST',
+                'BUN', 'Alkalinephos', 'Calcium', 'Chloride', 'Creatinine',
+                'Bilirubin_direct', 'Glucose', 'Lactate', 'Magnesium', 'Phosphate',
+                'Potassium', 'Bilirubin_total', 'TroponinI', 'Hct', 'Hgb',
+                'PTT', 'WBC', 'Fibrinogen', 'Platelets', 'Age', 'Gender',
+                'Unit1', 'Unit2', 'HospAdmTime', 'ICULOS',
+                'MAP_rolling_mean_6hr', 'MAP_delta_1hr', 'qSOFA_Resp', 'qSOFA_MAP',
+                'qSOFA_Score_simple'
+            ]
+
+    def _load_feature_defaults(self):
+        """Populate default values for features using available sample datasets."""
+        candidate_paths = [
+            'sample_patients_fixed.csv',
+            'sample_patients_correct.csv',
+            'sample_patients.csv',
+            'Dataset.csv'
+        ]
+
+        defaults: Dict[str, float] = {}
+        for path in candidate_paths:
+            if not os.path.exists(path):
+                continue
+            try:
+                # Use a subset of rows for very large datasets to reduce memory pressure
+                read_kwargs = {'nrows': 5000} if path == 'Dataset.csv' else {}
+                df = pd.read_csv(path, **read_kwargs)
+                for feature in self.feature_names:
+                    if feature in df.columns:
+                        median_value = pd.to_numeric(df[feature], errors='coerce').median()
+                        if not np.isnan(median_value):
+                            defaults.setdefault(feature, float(median_value))
+                if len(defaults) == len(self.feature_names):
+                    break
+            except Exception as exc:
+                print(f"⚠️ Unable to derive defaults from {path}: {exc}")
+
+        self.feature_defaults = defaults
+
     def _load_baseline_models(self):
         """Load Person B's baseline models"""
         try:
-            # Try to load trained models from Person B's work
-            model_paths = {
-                'logistic_regression': 'outputs/models/logistic_regression.pkl',
-                'random_forest': 'outputs/models/random_forest.pkl',
-                'xgboost': 'outputs/models/xgboost.pkl'
+            # Possible filenames for baseline models saved by collaborators
+            candidate_paths: Dict[str, List[str]] = {
+                'logistic_regression': [
+                    'outputs/models/logistic_regression.pkl',
+                    'outputs/models/model_logistic.pkl',
+                    'model_logistic.pkl'
+                ],
+                'random_forest': [
+                    'outputs/models/random_forest.pkl',
+                    'outputs/models/model_rf.pkl',
+                    'model_rf.pkl'
+                ],
+                'xgboost': [
+                    'outputs/models/xgboost.pkl',
+                    'outputs/models/model_xgb.pkl',
+                    'model_xgb_or_hgb.pkl'
+                ]
             }
-            
-            for name, path in model_paths.items():
-                if os.path.exists(path):
-                    with open(path, 'rb') as f:
-                        self.baseline_models[name] = pickle.load(f)
+
+            for name, paths in candidate_paths.items():
+                model = self._load_first_available_model(paths)
+                if model is not None:
+                    self.baseline_models[name] = model
                     print(f"✅ Loaded {name}")
                 else:
-                    print(f"⚠️ {name} not found at {path}")
-            
-            # If no models found, create dummy models for demo
+                    print(f"⚠️ Trained artifact for {name} not found. Checked: {paths}")
+
             if not self.baseline_models:
-                print("📝 Creating demo baseline models...")
-                self._create_demo_baseline_models()
-                
+                print("⚠️ No baseline model artifacts were loaded. Baseline predictions will be unavailable until artifacts are provided.")
+
         except Exception as e:
             print(f"⚠️ Error loading baseline models: {e}")
-            self._create_demo_baseline_models()
-    
-    def _create_demo_baseline_models(self):
-        """Create demo baseline models for demonstration"""
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.preprocessing import StandardScaler
-        
-        # Create dummy data for training
-        np.random.seed(42)
-        X_dummy = np.random.randn(100, len(self.feature_names))
-        y_dummy = np.random.randint(0, 2, 100)
-        
-        # Train models
-        self.baseline_models['logistic_regression'] = LogisticRegression(random_state=42)
-        self.baseline_models['logistic_regression'].fit(X_dummy, y_dummy)
-        
-        self.baseline_models['random_forest'] = RandomForestClassifier(random_state=42)
-        self.baseline_models['random_forest'].fit(X_dummy, y_dummy)
-        
-        print("✅ Created demo baseline models")
+
+    def _load_first_available_model(self, paths: List[str]):
+        """Helper to load the first existing model from a list of candidate paths."""
+        for path in paths:
+            if not os.path.exists(path):
+                continue
+            try:
+                if path.endswith('.joblib'):
+                    return joblib.load(path)
+                with open(path, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as exc:
+                print(f"⚠️ Failed loading model at {path}: {exc}")
+        return None
     
     def _load_deep_learning_models(self):
         """Load Person C's deep learning models"""
         try:
-            # Try to load models from Person C's work
-            model_paths = {
-                'grud': 'outputs/models/grud_demo_model.pt',
-                'lstm': 'outputs/models/lstm_demo_model.pt',
-                'cnn_lstm': 'outputs/models/cnn_lstm_demo_model.pt',
-                'transformer': 'outputs/models/transformer_demo_model.pt'
+            from models import GRUD, LSTM, CNNLSTM, Transformer
+
+            model_configs = {
+                'grud': {
+                    'class': GRUD,
+                    'init_args': {'hidden_size': 128, 'num_layers': 2, 'dropout': 0.3}
+                },
+                'lstm': {
+                    'class': LSTM,
+                    'init_args': {'hidden_size': 128, 'num_layers': 2, 'dropout': 0.3}
+                },
+                'cnn_lstm': {
+                    'class': CNNLSTM,
+                    'init_args': {'hidden_size': 128, 'num_layers': 1, 'dropout': 0.3,
+                                  'cnn_filters': [64, 128], 'kernel_size': 3}
+                },
+                'transformer': {
+                    'class': Transformer,
+                    'init_args': {'d_model': 128, 'nhead': 8, 'num_layers': 4, 'dropout': 0.1}
+                }
             }
-            
-            for name, path in model_paths.items():
-                if os.path.exists(path):
-                    # Load PyTorch model
-                    import torch
-                    # Allow full model load (we saved full model objects)
-                    self.deep_learning_models[name] = torch.load(path, map_location='cpu', weights_only=False)
-                    print(f"✅ Loaded {name}")
+
+            seeds = [42, 43, 44]
+
+            for name, cfg in model_configs.items():
+                models: List[torch.nn.Module] = []
+                for seed in seeds:
+                    model_path = os.path.join('outputs', 'models', f'{name}_seed{seed}.pt')
+                    if not os.path.exists(model_path):
+                        continue
+                    model = cfg['class'](input_size=len(self.feature_names), **cfg['init_args'])
+                    state_dict = torch.load(model_path, map_location='cpu')
+                    model.load_state_dict(state_dict)
+                    models.append(model)
+
+                if not models:
+                    fallback_path = os.path.join('outputs', 'models', f'{name}_real_data.pt')
+                    if os.path.exists(fallback_path):
+                        model = cfg['class'](input_size=len(self.feature_names), **cfg['init_args'])
+                        state_dict = torch.load(fallback_path, map_location='cpu')
+                        model.load_state_dict(state_dict)
+                        models.append(model)
+
+                if models:
+                    self.deep_learning_models[name] = TorchModelEnsemble(name, models)
+                    print(f"✅ Loaded {name} ({len(models)} checkpoint(s))")
                 else:
-                    print(f"⚠️ {name} not found at {path}")
-            
-            # If no models found, create dummy models for demo
-            if not self.deep_learning_models:
-                print("📝 Creating demo deep learning models...")
-                self._create_demo_deep_learning_models()
-                
+                    print(f"⚠️ No checkpoints found for {name}")
+
         except Exception as e:
             print(f"⚠️ Error loading deep learning models: {e}")
-            self._create_demo_deep_learning_models()
-    
-    def _create_demo_deep_learning_models(self):
-        """Create demo deep learning models for demonstration"""
-        # Create dummy models that return random predictions
-        class DummyModel:
-            def __init__(self, name):
-                self.name = name
-            
-            def predict(self, X, masks=None):
-                # Return random prediction
-                risk_score = np.random.uniform(0.1, 0.9)
-                return {
-                    'risk_score': risk_score,
-                    'risk_level': 'High' if risk_score > 0.7 else 'Medium' if risk_score > 0.3 else 'Low',
-                    'confidence': np.random.uniform(0.6, 0.9)
-                }
-        
-        self.deep_learning_models = {
-            'grud': DummyModel('GRU-D'),
-            'lstm': DummyModel('LSTM'),
-            'cnn_lstm': DummyModel('CNN-LSTM'),
-            'transformer': DummyModel('Transformer')
-        }
-        
-        print("✅ Created demo deep learning models")
-    
+
     def _load_preprocessing(self):
         """Load preprocessing components"""
         try:
-            # Try to load scaler from Person B's work
-            scaler_path = 'outputs/models/scaler.pkl'
-            if os.path.exists(scaler_path):
-                with open(scaler_path, 'rb') as f:
-                    self.scaler = pickle.load(f)
-                print("✅ Loaded scaler")
-            else:
-                # Create dummy scaler
-                from sklearn.preprocessing import StandardScaler
+            scaler_candidates = [
+                'outputs/models/scaler.pkl',
+                'outputs/models/scaler.joblib',
+                'outputs/cache/scaler.joblib',
+                'scaler_lr.pkl'
+            ]
+
+            for path in scaler_candidates:
+                if not os.path.exists(path):
+                    continue
+                try:
+                    if path.endswith('.joblib'):
+                        self.scaler = joblib.load(path)
+                    else:
+                        with open(path, 'rb') as f:
+                            self.scaler = pickle.load(f)
+                    print(f"✅ Loaded scaler from {path}")
+                    break
+                except Exception as exc:
+                    print(f"⚠️ Failed loading scaler at {path}: {exc}")
+
+            if self.scaler is None:
                 self.scaler = StandardScaler()
-                print("📝 Created demo scaler")
-                
+                print("⚠️ No pretrained scaler found. A new StandardScaler will be fitted on incoming data.")
+
         except Exception as e:
             print(f"⚠️ Error loading preprocessing: {e}")
-            from sklearn.preprocessing import StandardScaler
             self.scaler = StandardScaler()
     
     def preprocess_patient_data(self, patient_data):
@@ -198,25 +355,47 @@ class SepsisPredictionIntegration:
                 df = pd.DataFrame([patient_data])
             else:
                 df = patient_data.copy()
-            
-            # Handle missing values (Person A's imputation)
-            df = df.fillna(df.median())
-            
-            # Select relevant features
-            available_features = [col for col in self.feature_names if col in df.columns]
-            df_features = df[available_features]
-            
-            # Scale features
+
+            if isinstance(df, pd.Series):
+                df = df.to_frame().T
+
+            df = df.reset_index(drop=True)
+
+            feature_columns: Dict[str, pd.Series] = {}
+            for feature in self.feature_names:
+                if feature in df.columns:
+                    series = pd.to_numeric(df[feature], errors='coerce')
+                else:
+                    series = pd.Series(np.nan, index=df.index, dtype=float)
+                feature_columns[feature] = series
+
+            df_features = pd.DataFrame(feature_columns)
+            observation_mask = (~df_features.isna()).astype(np.float32).values
+
+            for feature in self.feature_names:
+                default_value = self.feature_defaults.get(feature)
+                fill_value = 0.0 if default_value is None else default_value
+                df_features[feature].fillna(fill_value, inplace=True)
+
+            feature_matrix = df_features.astype(np.float32).values
+
             if self.scaler is not None:
-                df_features_scaled = self.scaler.fit_transform(df_features)
+                try:
+                    scaled_features = self.scaler.transform(feature_matrix)
+                except NotFittedError:
+                    self.scaler.fit(feature_matrix)
+                    scaled_features = self.scaler.transform(feature_matrix)
+                except Exception as exc:
+                    print(f"⚠️ Falling back to unscaled features: {exc}")
+                    scaled_features = feature_matrix
             else:
-                df_features_scaled = df_features.values
-            
-            return df_features_scaled, available_features
-            
+                scaled_features = feature_matrix
+
+            return scaled_features.astype(np.float32), observation_mask, self.feature_names
+
         except Exception as e:
             print(f"❌ Error preprocessing data: {e}")
-            return None, []
+            return None, None, []
     
     def predict_baseline_models(self, patient_data):
         """Get predictions from Person B's baseline models"""
@@ -224,21 +403,23 @@ class SepsisPredictionIntegration:
         
         try:
             # Preprocess data
-            X_processed, features = self.preprocess_patient_data(patient_data)
-            
+            X_processed, _, _ = self.preprocess_patient_data(patient_data)
+
             if X_processed is None:
                 return predictions
-            
+
             # Get predictions from each baseline model
             for name, model in self.baseline_models.items():
                 try:
                     if hasattr(model, 'predict_proba'):
-                        prob = model.predict_proba(X_processed)[0][1]
+                        probs = model.predict_proba(X_processed)
+                        prob = float(np.atleast_2d(probs)[-1, 1])
                     else:
-                        prob = model.predict(X_processed)[0]
-                    
+                        preds = model.predict(X_processed)
+                        prob = float(np.atleast_1d(preds)[-1])
+
                     predictions[name] = {
-                        'risk_score': float(prob),
+                        'risk_score': prob,
                         'risk_level': 'High' if prob > 0.7 else 'Medium' if prob > 0.3 else 'Low',
                         'confidence': 0.8  # Placeholder
                     }
@@ -264,24 +445,20 @@ class SepsisPredictionIntegration:
         
         try:
             # Preprocess data
-            X_processed, features = self.preprocess_patient_data(patient_data)
-            
-            if X_processed is None:
+            X_processed, observation_mask, _ = self.preprocess_patient_data(patient_data)
+
+            if X_processed is None or observation_mask is None:
                 return predictions
-            
+
             # Get predictions from each deep learning model
             for name, model in self.deep_learning_models.items():
                 try:
                     if hasattr(model, 'predict'):
-                        pred = model.predict(X_processed, np.ones_like(X_processed))
-                        predictions[name] = pred
+                        seq_features = X_processed[np.newaxis, ...]
+                        seq_mask = observation_mask[np.newaxis, ...]
+                        predictions[name] = model.predict(seq_features, seq_mask)
                     else:
-                        # Fallback for dummy models
-                        predictions[name] = {
-                            'risk_score': np.random.uniform(0.1, 0.9),
-                            'risk_level': 'High' if np.random.random() > 0.7 else 'Medium' if np.random.random() > 0.3 else 'Low',
-                            'confidence': np.random.uniform(0.6, 0.9)
-                        }
+                        print(f"⚠️ Loaded deep learning component for {name} lacks predict method")
                 except Exception as e:
                     print(f"⚠️ Error with {name}: {e}")
                     predictions[name] = {
@@ -298,32 +475,43 @@ class SepsisPredictionIntegration:
     def _calculate_clinical_scores(self, patient_data):
         """Calculate clinical scores (Person B's implementation)"""
         scores = {}
-        
+
         try:
+            if isinstance(patient_data, pd.DataFrame):
+                record = patient_data.iloc[-1].to_dict()
+            elif isinstance(patient_data, dict):
+                record = patient_data
+            else:
+                try:
+                    record = dict(patient_data)
+                except Exception:
+                    record = {}
+
             # SIRS Score
             sirs_score = 0
-            if patient_data.get('Temp', 37) > 38 or patient_data.get('Temp', 37) < 36:
+            temp = record.get('Temp', 37)
+            if temp > 38 or temp < 36:
                 sirs_score += 1
-            if patient_data.get('HR', 80) > 90:
+            if record.get('HR', 80) > 90:
                 sirs_score += 1
-            if patient_data.get('Resp', 16) > 20:
+            if record.get('Resp', 16) > 20:
                 sirs_score += 1
-            wbc = patient_data.get('WBC', 8)
+            wbc = record.get('WBC', 8)
             if wbc > 12 or wbc < 4:
                 sirs_score += 1
             scores['sirs'] = sirs_score
-            
+
             # qSOFA Score
             qsofa_score = 0
-            if patient_data.get('Resp', 16) >= 22:
+            if record.get('Resp', 16) >= 22:
                 qsofa_score += 1
-            if patient_data.get('SBP', 120) <= 100:
+            if record.get('SBP', 120) <= 100:
                 qsofa_score += 1
             scores['qsofa'] = qsofa_score
-            
+
             # SOFA Score (partial)
             sofa_score = 0
-            platelets = patient_data.get('Platelets', 250)
+            platelets = record.get('Platelets', 250)
             if platelets < 20:
                 sofa_score += 4
             elif platelets < 50:
@@ -332,8 +520,8 @@ class SepsisPredictionIntegration:
                 sofa_score += 2
             elif platelets < 150:
                 sofa_score += 1
-            
-            bilirubin = patient_data.get('Bilirubin_total', 1.0)
+
+            bilirubin = record.get('Bilirubin_total', 1.0)
             if bilirubin >= 12:
                 sofa_score += 4
             elif bilirubin >= 6:
