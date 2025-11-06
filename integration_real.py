@@ -22,9 +22,10 @@ warnings.filterwarnings('ignore')
 class TorchModelEnsemble:
     """Utility wrapper for averaging predictions across multiple PyTorch checkpoints."""
 
-    def __init__(self, name: str, models: List[torch.nn.Module]):
+    def __init__(self, name: str, models: List[torch.nn.Module], expected_input_size: int):
         self.name = name
         self.models = models
+        self.expected_input_size = expected_input_size
         for model in self.models:
             model.eval()
             model.to('cpu')
@@ -41,11 +42,32 @@ class TorchModelEnsemble:
 
         batch_size, seq_len, num_features = features_tensor.shape
 
+        # Pad or truncate features to match expected input size
+        if num_features != self.expected_input_size:
+            if num_features < self.expected_input_size:
+                # Pad with zeros
+                pad_size = self.expected_input_size - num_features
+                padding = torch.zeros((batch_size, seq_len, pad_size), dtype=torch.float32)
+                features_tensor = torch.cat([features_tensor, padding], dim=2)
+            else:
+                # Truncate to expected size
+                features_tensor = features_tensor[:, :, :self.expected_input_size]
+            num_features = self.expected_input_size
+
         if mask is not None:
             mask_tensor = torch.tensor(mask, dtype=torch.float32)
             if mask_tensor.ndim == 2:
                 mask_tensor = mask_tensor.unsqueeze(0)
             mask_tensor = mask_tensor.to(features_tensor.dtype)
+            
+            # Pad or truncate mask to match features
+            if mask_tensor.shape[2] != num_features:
+                if mask_tensor.shape[2] < num_features:
+                    pad_size = num_features - mask_tensor.shape[2]
+                    padding = torch.zeros((mask_tensor.shape[0], mask_tensor.shape[1], pad_size), dtype=torch.float32)
+                    mask_tensor = torch.cat([mask_tensor, padding], dim=2)
+                else:
+                    mask_tensor = mask_tensor[:, :, :num_features]
         else:
             mask_tensor = torch.ones((batch_size, seq_len, num_features), dtype=torch.float32)
 
@@ -265,6 +287,29 @@ class SepsisPredictionIntegration:
         try:
             from models import GRUD, LSTM, CNNLSTM, Transformer
 
+            # Try to load input_size from config file (models were trained with this size)
+            input_size = None
+            config_paths = [
+                'outputs/config.json',
+                'Capstone/outputs/config.json'
+            ]
+            for config_path in config_paths:
+                if os.path.exists(config_path):
+                    try:
+                        with open(config_path, 'r') as f:
+                            config = json.load(f)
+                            if 'n_features' in config:
+                                input_size = config['n_features']
+                                print(f"📋 Loaded input_size={input_size} from {config_path}")
+                                break
+                    except Exception as e:
+                        print(f"⚠️ Could not read config from {config_path}: {e}")
+            
+            # Fallback to feature_names length if config not found
+            if input_size is None:
+                input_size = len(self.feature_names)
+                print(f"⚠️ Using input_size={input_size} from feature_names (config not found)")
+
             model_configs = {
                 'grud': {
                     'class': GRUD,
@@ -293,27 +338,35 @@ class SepsisPredictionIntegration:
                     model_path = os.path.join('outputs', 'models', f'{name}_seed{seed}.pt')
                     if not os.path.exists(model_path):
                         continue
-                    model = cfg['class'](input_size=len(self.feature_names), **cfg['init_args'])
-                    state_dict = torch.load(model_path, map_location='cpu')
-                    model.load_state_dict(state_dict)
-                    models.append(model)
+                    try:
+                        model = cfg['class'](input_size=input_size, **cfg['init_args'])
+                        state_dict = torch.load(model_path, map_location='cpu')
+                        model.load_state_dict(state_dict)
+                        models.append(model)
+                    except Exception as e:
+                        print(f"⚠️ Error loading {name}_seed{seed}: {e}")
 
                 if not models:
                     fallback_path = os.path.join('outputs', 'models', f'{name}_real_data.pt')
                     if os.path.exists(fallback_path):
-                        model = cfg['class'](input_size=len(self.feature_names), **cfg['init_args'])
-                        state_dict = torch.load(fallback_path, map_location='cpu')
-                        model.load_state_dict(state_dict)
-                        models.append(model)
+                        try:
+                            model = cfg['class'](input_size=input_size, **cfg['init_args'])
+                            state_dict = torch.load(fallback_path, map_location='cpu')
+                            model.load_state_dict(state_dict)
+                            models.append(model)
+                        except Exception as e:
+                            print(f"⚠️ Error loading {name}_real_data: {e}")
 
                 if models:
-                    self.deep_learning_models[name] = TorchModelEnsemble(name, models)
+                    self.deep_learning_models[name] = TorchModelEnsemble(name, models, input_size)
                     print(f"✅ Loaded {name} ({len(models)} checkpoint(s))")
                 else:
                     print(f"⚠️ No checkpoints found for {name}")
 
         except Exception as e:
             print(f"⚠️ Error loading deep learning models: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _load_preprocessing(self):
         """Load preprocessing components"""
@@ -482,18 +535,39 @@ class SepsisPredictionIntegration:
                                 X_for_model = np.hstack([X_for_model, padding])
                     
                     if hasattr(model, 'predict_proba'):
-                        prob = model.predict_proba(X_for_model)[0][1]
+                        proba = model.predict_proba(X_for_model)[0]
+                        prob = proba[1] if len(proba) > 1 else proba[0]
+                        # Calculate confidence based on probability distribution
+                        # Higher confidence when probability is more extreme (closer to 0 or 1)
+                        # Also consider the difference between class probabilities
+                        if len(proba) > 1:
+                            max_prob = max(proba)
+                            # Confidence increases with distance from 0.5 and with class separation
+                            confidence = float(np.clip(
+                                0.5 + abs(prob - 0.5) * 0.8 + (max_prob - 0.5) * 0.3,
+                                0.5, 0.95
+                            ))
+                        else:
+                            # Fallback if only one probability
+                            confidence = float(np.clip(0.5 + abs(prob - 0.5) * 0.8, 0.5, 0.95))
                     else:
                         prob = model.predict(X_for_model)[0]
                         # If predict returns binary, convert to probability-like score
                         if isinstance(prob, (int, np.integer)):
                             prob = float(prob)
+                            # For binary predictions, lower confidence since we don't have probability distribution
+                            confidence = 0.65
                         elif prob > 1.0:
-                            prob = prob / 100.0  # Convert percentage to probability
+                            prob = prob / 100.0
+                            confidence = float(np.clip(0.5 + abs(prob - 0.5) * 0.6, 0.5, 0.9))
+                        else:
+                            # Assume it's already a probability
+                            confidence = float(np.clip(0.5 + abs(prob - 0.5) * 0.8, 0.5, 0.95))
+                    
                     predictions[name] = {
                         'risk_score': prob,
                         'risk_level': 'High' if prob > 0.7 else 'Medium' if prob > 0.3 else 'Low',
-                        'confidence': 0.8  # Placeholder
+                        'confidence': confidence
                     }
                 except Exception as e:
                     print(f"⚠️ Error with {name}: {e}")
@@ -701,3 +775,22 @@ integration_system = SepsisPredictionIntegration()
 def get_integration_system():
     """Get the global integration system instance"""
     return integration_system
+
+def check_baseline_models_status():
+    """Helper function to check if baseline models are loaded and available"""
+    system = get_integration_system()
+    if not system.is_initialized:
+        return {
+            'initialized': False,
+            'baseline_models_loaded': 0,
+            'baseline_models': []
+        }
+    
+    baseline_models = list(system.baseline_models.keys())
+    return {
+        'initialized': True,
+        'baseline_models_loaded': len(baseline_models),
+        'baseline_models': baseline_models,
+        'deep_learning_models_loaded': len(system.deep_learning_models),
+        'deep_learning_models': list(system.deep_learning_models.keys())
+    }
