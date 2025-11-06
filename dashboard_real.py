@@ -12,6 +12,7 @@ import json
 import sys
 import os
 import warnings
+from integration_real import get_integration_system
 warnings.filterwarnings('ignore')
 
 # Add project root to path
@@ -78,10 +79,135 @@ def load_real_data():
         st.error(f"❌ Error loading data: {e}")
         return None
 
+
+@st.cache_resource
+def load_integration_system():
+    """Load and cache the integration system"""
+    try:
+        return get_integration_system()
+    except Exception as e:
+        print(f"❌ Unable to load integration system: {e}")
+        return None
+
+
+def _convert_value(value):
+    """Convert numpy types to native Python types for serialization"""
+    if isinstance(value, (np.generic,)):
+        return value.item()
+    return value
+
+
+def _prepare_patient_dict(data):
+    """Normalize patient data keys for integration compatibility"""
+    if isinstance(data, dict):
+        base = data.copy()
+    elif hasattr(data, 'to_dict'):
+        base = data.to_dict()
+    else:
+        base = dict(data)
+
+    patient_dict = {key: _convert_value(val) for key, val in base.items()}
+
+    key_mapping = {
+        'heart_rate': 'HR',
+        'hr': 'HR',
+        'respiratory_rate': 'Resp',
+        'rr': 'Resp',
+        'temperature': 'Temp',
+        'temp': 'Temp',
+        'oxygen_saturation': 'O2Sat',
+        'spo2': 'O2Sat',
+        'map': 'MAP',
+        'sbp': 'SBP',
+        'dbp': 'DBP',
+        'lactate': 'Lactate',
+        'wbc': 'WBC',
+        'creatinine': 'Creatinine',
+        'bilirubin_total': 'Bilirubin_total',
+        'age': 'Age',
+        'gender': 'Gender',
+        'platelets': 'Platelets'
+    }
+
+    for source, target in key_mapping.items():
+        if source in base and target not in patient_dict:
+            patient_dict[target] = _convert_value(base[source])
+
+    return patient_dict
+
+
+def _convert_integration_feature_importance(patient_dict, features):
+    """Convert integration feature importance to dashboard format"""
+    converted = []
+
+    for feature_info in features:
+        feature_key = feature_info.get('feature')
+        if not feature_key:
+            continue
+
+        value = patient_dict.get(feature_key)
+        if value is None:
+            value = patient_dict.get(feature_key.upper())
+        if value is None:
+            value = patient_dict.get(feature_key.lower())
+
+        converted.append({
+            'feature': feature_key.upper(),
+            'importance': float(feature_info.get('importance', 0.0)),
+            'value': _convert_value(value) if value is not None else 0.0
+        })
+
+    return converted
+
+
+def _get_integration_feature_importance(patient_dict):
+    """Retrieve feature importance from the integration system"""
+    integration = load_integration_system()
+
+    if not integration or not getattr(integration, 'is_initialized', False):
+        return []
+
+    try:
+        feature_info = integration.get_feature_importance(patient_dict)
+        if feature_info and feature_info.get('top_features'):
+            return _convert_integration_feature_importance(
+                patient_dict,
+                feature_info.get('top_features', [])
+            )
+    except Exception as e:
+        print(f"⚠️ Integration feature importance failed: {e}")
+
+    return []
+
+
+def _get_integration_predictions(patient_dict):
+    """Use integration system to get predictions and feature importance"""
+    integration = load_integration_system()
+
+    if not integration or not getattr(integration, 'is_initialized', False):
+        return None, None, []
+
+    try:
+        comprehensive = integration.get_comprehensive_prediction(patient_dict)
+
+        predictions = None
+        ensemble_prediction = None
+        feature_importance = _get_integration_feature_importance(patient_dict)
+
+        if comprehensive and 'individual_predictions' in comprehensive:
+            predictions = comprehensive['individual_predictions']
+            ensemble_prediction = comprehensive.get('ensemble_prediction')
+
+        return predictions, ensemble_prediction, feature_importance
+
+    except Exception as e:
+        print(f"⚠️ Integration prediction failed: {e}")
+        return None, None, []
+
 def generate_patient_data(df, patient_id):
     """Generate realistic patient data from the real dataset"""
     if df is None:
-        return None
+        return generate_sample_patient_data(patient_id)
     
     # Get patient data
     patient_data = df[df['Patient_ID'] == patient_id].copy()
@@ -101,13 +227,15 @@ def generate_patient_data(df, patient_id):
     # Generate risk trajectory (last 24 hours)
     risk_trajectory = generate_risk_trajectory(patient_data)
     
-    # Generate model predictions
-    model_predictions = generate_model_predictions(latest_record)
-    
-    # Calculate ensemble prediction
-    ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values()])
-    ensemble_level = 'High' if ensemble_score > 0.7 else 'Medium' if ensemble_score > 0.3 else 'Low'
-    
+    try:
+        model_predictions, ensemble_prediction, feature_importance = generate_model_predictions(latest_record)
+    except RuntimeError as err:
+        print(f'❌ Unable to generate integration predictions for patient {patient_id}: {err}')
+        return None
+
+    ensemble_score = float(ensemble_prediction.get('average_risk_score', 0.0))
+    ensemble_level = ensemble_prediction.get('risk_level', get_risk_level(ensemble_score))
+
     return {
         'patient_id': patient_id,
         'admission_time': (datetime.now() - timedelta(hours=24)).isoformat(),
@@ -132,65 +260,84 @@ def generate_patient_data(df, patient_id):
             'sofa_score': sofa_score
         },
         'model_predictions': model_predictions,
-        'ensemble_prediction': {
-            'average_risk_score': float(ensemble_score),
-            'risk_level': ensemble_level,
-            'agreement_score': 0.85,  # Placeholder
-            'recommended_action': get_recommendation(ensemble_level)
-        },
+        'ensemble_prediction': ensemble_prediction,
         'risk_trajectory': risk_trajectory,
-        'feature_importance': generate_feature_importance(latest_record)
+        'feature_importance': feature_importance or []
     }
 
 def generate_sample_patient_data(patient_id):
-    """Generate sample data for demonstration"""
+    """Generate sample data for demonstration using integration outputs"""
     np.random.seed(hash(patient_id) % 2**32)  # Consistent random data per patient
-    
-    # Generate different risk levels for different patients
-    risk_levels = ['Low', 'Medium', 'High']
-    risk_level = risk_levels[hash(patient_id) % 3]
-    
-    base_risk = {'Low': 0.2, 'Medium': 0.5, 'High': 0.8}[risk_level]
-    risk_score = base_risk + np.random.normal(0, 0.1)
-    risk_score = np.clip(risk_score, 0, 1)
-    
+
+    age = int(np.clip(np.random.normal(65, 10), 18, 95))
+    gender = np.random.choice(['Male', 'Female'])
+    heart_rate = int(np.clip(80 + np.random.normal(0, 20), 40, 180))
+    sbp = int(np.clip(120 + np.random.normal(0, 20), 80, 220))
+    dbp = int(np.clip(80 + np.random.normal(0, 15), 40, 140))
+    map_val = int((sbp + 2 * dbp) / 3)
+    temperature = round(np.clip(37.0 + np.random.normal(0, 1), 34.0, 40.0), 1)
+    respiratory_rate = int(np.clip(16 + np.random.normal(0, 4), 8, 40))
+    oxygen_saturation = int(np.clip(95 + np.random.normal(0, 5), 75, 100))
+    wbc = round(np.clip(8.0 + np.random.normal(0, 3), 3.0, 30.0), 1)
+    lactate = round(np.clip(1.0 + np.random.normal(0, 0.5), 0.5, 6.0), 1)
+    creatinine = round(np.clip(1.0 + np.random.normal(0, 0.5), 0.3, 5.0), 1)
+    bilirubin = round(np.clip(1.0 + np.random.normal(0, 0.5), 0.2, 12.0), 1)
+    platelets = int(np.clip(250 + np.random.normal(0, 50), 50, 600))
+
+    sample_record = {
+        'patient_id': patient_id,
+        'Age': age,
+        'Gender': gender,
+        'HR': heart_rate,
+        'SBP': sbp,
+        'DBP': dbp,
+        'MAP': map_val,
+        'Temp': temperature,
+        'Resp': respiratory_rate,
+        'O2Sat': oxygen_saturation,
+        'WBC': wbc,
+        'Lactate': lactate,
+        'Creatinine': creatinine,
+        'Bilirubin_total': bilirubin,
+        'Platelets': platelets
+    }
+
+    try:
+        model_predictions, ensemble_prediction, feature_importance = generate_model_predictions(sample_record)
+    except RuntimeError as err:
+        print(f'❌ Unable to generate sample predictions via integration: {err}')
+        return None
+
+    ensemble_score = float(ensemble_prediction.get('average_risk_score', 0.5))
+    risk_trajectory = generate_sample_trajectory(ensemble_score)
+
     return {
         'patient_id': patient_id,
         'admission_time': (datetime.now() - timedelta(hours=24)).isoformat(),
         'current_time': datetime.now().isoformat(),
         'vital_signs': {
-            'heart_rate': int(80 + np.random.normal(0, 20)),
-            'blood_pressure_systolic': int(120 + np.random.normal(0, 20)),
-            'blood_pressure_diastolic': int(80 + np.random.normal(0, 15)),
-            'temperature': round(37.0 + np.random.normal(0, 1), 1),
-            'respiratory_rate': int(16 + np.random.normal(0, 4)),
-            'oxygen_saturation': int(95 + np.random.normal(0, 5))
+            'heart_rate': heart_rate,
+            'blood_pressure_systolic': sbp,
+            'blood_pressure_diastolic': dbp,
+            'temperature': temperature,
+            'respiratory_rate': respiratory_rate,
+            'oxygen_saturation': oxygen_saturation
         },
         'lab_values': {
-            'white_blood_cells': round(8.0 + np.random.normal(0, 3), 1),
-            'lactate': round(1.0 + np.random.normal(0, 0.5), 1),
-            'creatinine': round(1.0 + np.random.normal(0, 0.5), 1),
-            'bilirubin': round(1.0 + np.random.normal(0, 0.5), 1)
+            'white_blood_cells': wbc,
+            'lactate': lactate,
+            'creatinine': creatinine,
+            'bilirubin': bilirubin
         },
         'clinical_scores': {
-            'sirs_score': int(np.random.randint(0, 4)),
-            'qsofa_score': int(np.random.randint(0, 3)),
-            'sofa_score': int(np.random.randint(0, 10))
+            'sirs_score': calculate_sirs_score(sample_record),
+            'qsofa_score': calculate_qsofa_score(sample_record),
+            'sofa_score': calculate_sofa_score(sample_record)
         },
-        'model_predictions': {
-            'grud': {'risk_score': risk_score + np.random.normal(0, 0.1), 'risk_level': risk_level, 'confidence': 0.8},
-            'lstm': {'risk_score': risk_score + np.random.normal(0, 0.1), 'risk_level': risk_level, 'confidence': 0.75},
-            'cnn_lstm': {'risk_score': risk_score + np.random.normal(0, 0.1), 'risk_level': risk_level, 'confidence': 0.82},
-            'transformer': {'risk_score': risk_score + np.random.normal(0, 0.1), 'risk_level': risk_level, 'confidence': 0.78}
-        },
-        'ensemble_prediction': {
-            'average_risk_score': float(risk_score),
-            'risk_level': risk_level,
-            'agreement_score': 0.85,
-            'recommended_action': get_recommendation(risk_level)
-        },
-        'risk_trajectory': generate_sample_trajectory(risk_score),
-        'feature_importance': generate_sample_feature_importance()
+        'model_predictions': model_predictions,
+        'ensemble_prediction': ensemble_prediction,
+        'risk_trajectory': risk_trajectory,
+        'feature_importance': feature_importance or []
     }
 
 def generate_risk_trajectory(patient_data):
@@ -213,25 +360,15 @@ def generate_risk_trajectory(patient_data):
     return trajectory
 
 def generate_model_predictions(record):
-    """Generate model predictions based on patient data"""
-    # Simple risk calculation for each model
-    base_risk = 0.3
-    
-    # Add some variation for each model
-    grud_risk = base_risk + (record.get('HR', 80) - 80) * 0.001
-    lstm_risk = base_risk + (record.get('Temp', 37) - 37) * 0.05
-    cnn_lstm_risk = base_risk + (record.get('WBC', 8) - 8) * 0.01
-    transformer_risk = base_risk + (record.get('Resp', 16) - 16) * 0.01
-    
-    risks = [grud_risk, lstm_risk, cnn_lstm_risk, transformer_risk]
-    risks = [np.clip(r, 0, 1) for r in risks]
-    
-    return {
-        'grud': {'risk_score': risks[0], 'risk_level': get_risk_level(risks[0]), 'confidence': 0.8},
-        'lstm': {'risk_score': risks[1], 'risk_level': get_risk_level(risks[1]), 'confidence': 0.75},
-        'cnn_lstm': {'risk_score': risks[2], 'risk_level': get_risk_level(risks[2]), 'confidence': 0.82},
-        'transformer': {'risk_score': risks[3], 'risk_level': get_risk_level(risks[3]), 'confidence': 0.78}
-    }
+    """Generate model predictions using the integration system"""
+    patient_dict = _prepare_patient_dict(record)
+
+    predictions, ensemble_prediction, feature_importance = _get_integration_predictions(patient_dict)
+
+    if not predictions or not ensemble_prediction:
+        raise RuntimeError('Integration predictions unavailable')
+
+    return predictions, ensemble_prediction, feature_importance
 
 def generate_sample_trajectory(base_risk):
     """Generate sample risk trajectory"""
@@ -249,62 +386,6 @@ def generate_sample_trajectory(base_risk):
         })
     
     return trajectory
-
-def generate_feature_importance(record):
-    """Generate feature importance based on patient data"""
-    features = ['HR', 'Temp', 'Resp', 'WBC', 'SBP', 'O2Sat', 'Creatinine', 'Bilirubin_total']
-    importance = []
-    
-    for feature in features:
-        value = record.get(feature, 0)
-        # Calculate importance based on how far from normal the value is
-        if feature == 'HR':
-            imp = abs(value - 80) / 80
-        elif feature == 'Temp':
-            imp = abs(value - 37) / 37
-        elif feature == 'Resp':
-            imp = abs(value - 16) / 16
-        elif feature == 'WBC':
-            imp = abs(value - 8) / 8
-        elif feature == 'SBP':
-            imp = abs(value - 120) / 120
-        elif feature == 'O2Sat':
-            imp = abs(value - 95) / 95
-        elif feature == 'Creatinine':
-            imp = abs(value - 1.0) / 1.0
-        elif feature == 'Bilirubin_total':
-            imp = abs(value - 1.0) / 1.0
-        else:
-            imp = 0.1
-        
-        importance.append({
-            'feature': feature,
-            'importance': imp,
-            'value': value
-        })
-    
-    # Sort by importance
-    importance.sort(key=lambda x: x['importance'], reverse=True)
-    return importance[:5]
-
-def generate_sample_feature_importance():
-    """Generate sample feature importance"""
-    features = ['HR', 'Temp', 'Resp', 'WBC', 'Lactate']
-    importance = []
-    
-    for feature in features:
-        imp = np.random.uniform(0.1, 0.8)
-        value = np.random.uniform(60, 120) if feature == 'HR' else np.random.uniform(35, 40) if feature == 'Temp' else np.random.uniform(10, 25)
-        
-        importance.append({
-            'feature': feature,
-            'importance': imp,
-            'value': value
-        })
-    
-    # Sort by importance
-    importance.sort(key=lambda x: x['importance'], reverse=True)
-    return importance
 
 def calculate_sirs_score(record):
     """Calculate SIRS score from patient record"""
@@ -487,15 +568,6 @@ def get_risk_level(risk_score):
     else:
         return 'Low'
 
-def get_recommendation(risk_level):
-    """Get clinical recommendation based on risk level"""
-    if risk_level == 'High':
-        return 'Immediate clinical attention required'
-    elif risk_level == 'Medium':
-        return 'Close monitoring recommended'
-    else:
-        return 'Continue routine monitoring'
-
 def check_alert_persistence(risk_trajectory):
     """Check if high risk persists for >2 hours"""
     high_risk_hours = 0
@@ -607,8 +679,11 @@ def show_model_predictions(risk_data):
     """Display predictions from all models"""
     st.header("🤖 Model Predictions")
     
-    predictions = risk_data['model_predictions']
-    
+    predictions = risk_data.get('model_predictions', {})
+    if not predictions:
+        st.warning("No model predictions available from the integration service.")
+        return
+
     # Create comparison chart
     models = list(predictions.keys())
     scores = [predictions[model]['risk_score'] for model in models]
@@ -765,7 +840,10 @@ def show_explainability(risk_data):
     """Display feature importance and explainability"""
     st.header("🧠 Explainability")
     
-    feature_importance = risk_data['feature_importance']
+    feature_importance = risk_data.get('feature_importance', [])
+    if not feature_importance:
+        st.info("Feature importance is unavailable from the integration service.")
+        return
     
     # Feature importance chart
     st.subheader("Feature Importance")
@@ -1249,6 +1327,68 @@ def show_fairness_analysis():
         else:
             st.success(f"✅ Fair performance across {demo.lower()} groups")
 
+def generate_real_model_predictions(patient_dict):
+    """Generate predictions using the integration system"""
+    normalized_dict = _prepare_patient_dict(patient_dict)
+
+    predictions, ensemble_prediction, feature_importance = _get_integration_predictions(normalized_dict)
+
+    if not predictions or not ensemble_prediction:
+        raise RuntimeError('Integration predictions unavailable')
+
+    return predictions, ensemble_prediction, feature_importance
+
+
+def generate_patient_data_from_dict(patient_dict):
+    """Generate comprehensive patient data from manually added patient dictionary"""
+    try:
+        sirs_score = calculate_sirs_score(patient_dict)
+        qsofa_score = calculate_qsofa_score(patient_dict)
+        news2_score = calculate_news2_score(patient_dict)
+        sofa_score = calculate_sofa_score(patient_dict)
+
+        model_predictions, ensemble_prediction, feature_importance = generate_real_model_predictions(patient_dict)
+
+        ensemble_score = float(ensemble_prediction.get('average_risk_score', 0.0))
+        risk_trajectory = generate_sample_trajectory(ensemble_score)
+
+        return {
+            'patient_id': patient_dict['patient_id'],
+            'admission_time': (datetime.now() - timedelta(hours=24)).isoformat(),
+            'current_time': datetime.now().isoformat(),
+            'vital_signs': {
+                'heart_rate': int(patient_dict.get('heart_rate', patient_dict.get('HR', 80))),
+                'blood_pressure_systolic': int(patient_dict.get('sbp', patient_dict.get('SBP', 120))),
+                'blood_pressure_diastolic': int(patient_dict.get('dbp', patient_dict.get('DBP', 80))),
+                'temperature': round(patient_dict.get('temperature', patient_dict.get('Temp', 37.0)), 1),
+                'respiratory_rate': int(patient_dict.get('respiratory_rate', patient_dict.get('Resp', 16))),
+                'oxygen_saturation': int(patient_dict.get('oxygen_saturation', patient_dict.get('O2Sat', 95)))
+            },
+            'lab_values': {
+                'white_blood_cells': round(patient_dict.get('wbc', patient_dict.get('WBC', 8.0)), 1),
+                'lactate': round(patient_dict.get('lactate', patient_dict.get('Lactate', 1.0)), 1),
+                'creatinine': round(patient_dict.get('creatinine', patient_dict.get('Creatinine', 1.0)), 1),
+                'bilirubin': round(patient_dict.get('bilirubin_total', patient_dict.get('Bilirubin_total', 1.0)), 1),
+                'platelets': int(patient_dict.get('platelets', patient_dict.get('Platelets', 250)))
+            },
+            'clinical_scores': {
+                'sirs_score': sirs_score,
+                'qsofa_score': qsofa_score,
+                'news2_score': news2_score,
+                'sofa_score': sofa_score
+            },
+            'model_predictions': model_predictions,
+            'ensemble_prediction': ensemble_prediction,
+            'risk_trajectory': risk_trajectory,
+            'feature_importance': feature_importance or [],
+            'is_manual_entry': True
+        }
+
+    except Exception as e:
+        print(f"Error in generate_patient_data_from_dict: {e}")
+        return None
+
+
 def export_patient_report(patient_data):
     """Export comprehensive patient report"""
     report = {
@@ -1339,316 +1479,6 @@ def create_comprehensive_patient_data(patient_id, age, gender, heart_rate, sbp, 
         'timestamp': datetime.now(),
         'is_new_patient': True
     }
-
-def calculate_clinical_risk(patient_dict):
-    """Calculate clinical risk based on vital signs and lab values"""
-    risk_factors = 0
-    risk_details = []
-    
-    # Temperature risk
-    if patient_dict.get('temperature', 37) > 38.3 or patient_dict.get('temperature', 37) < 36:
-        risk_factors += 1
-        risk_details.append("Abnormal temperature")
-    
-    # Heart rate risk
-    if patient_dict.get('heart_rate', 80) > 90:
-        risk_factors += 1
-        risk_details.append("Tachycardia")
-    
-    # Respiratory rate risk
-    if patient_dict.get('respiratory_rate', 16) > 20:
-        risk_factors += 1
-        risk_details.append("Tachypnea")
-    
-    # Blood pressure risk
-    if patient_dict.get('map', 75) < 70:
-        risk_factors += 1
-        risk_details.append("Hypotension")
-    
-    # Lactate risk
-    if patient_dict.get('lactate', 1.5) > 2.0:
-        risk_factors += 1
-        risk_details.append("Elevated lactate")
-    
-    # WBC risk
-    wbc = patient_dict.get('wbc', 8)
-    if wbc > 12 or wbc < 4:
-        risk_factors += 1
-        risk_details.append("Abnormal WBC")
-    
-    # Oxygen saturation risk
-    if patient_dict.get('oxygen_saturation', 95) < 95:
-        risk_factors += 1
-        risk_details.append("Low oxygen saturation")
-    
-    # Age risk
-    if patient_dict.get('age', 65) > 65:
-        risk_factors += 0.5
-        risk_details.append("Advanced age")
-    
-    # Determine risk level
-    if risk_factors >= 4:
-        risk_level = "High"
-        risk_score = 0.8
-    elif risk_factors >= 2:
-        risk_level = "Medium"
-        risk_score = 0.5
-    else:
-        risk_level = "Low"
-        risk_score = 0.2
-    
-    return {
-        'risk_level': risk_level,
-        'risk_score': risk_score,
-        'risk_factors': risk_factors,
-        'risk_details': risk_details
-    }
-
-def create_new_patient_data(patient_id, age, gender, hr, map_val, temp, rr, lactate, wbc, creatinine):
-    """Create new patient data dictionary"""
-    return {
-        'patient_id': patient_id,
-        'age': age,
-        'gender': gender,
-        'heart_rate': hr,
-        'map': map_val,
-        'temperature': temp,
-        'respiratory_rate': rr,
-        'lactate': lactate,
-        'wbc': wbc,
-        'creatinine': creatinine,
-        'timestamp': datetime.now(),
-        'is_new_patient': True
-    }
-
-def generate_patient_data_from_dict(patient_dict):
-    """Generate comprehensive patient data from manually added patient dictionary"""
-    try:
-        # Calculate clinical scores
-        sirs_score = calculate_sirs_score(patient_dict)
-        qsofa_score = calculate_qsofa_score(patient_dict)
-        news2_score = calculate_news2_score(patient_dict)
-        sofa_score = calculate_sofa_score(patient_dict)
-        
-        # Calculate clinical risk
-        clinical_risk = calculate_clinical_risk(patient_dict)
-        
-        # Generate model predictions (try real models first, fallback to clinical)
-        try:
-            model_predictions = generate_real_model_predictions(patient_dict)
-        except Exception as e:
-            print(f"Real model prediction failed: {e}")
-            model_predictions = generate_simplified_predictions(patient_dict)
-        
-        # Calculate ensemble prediction
-        risk_scores = [pred.get('risk_score', 0.3) for pred in model_predictions.values()]
-        ensemble_score = np.mean(risk_scores) if risk_scores else clinical_risk['risk_score']
-        
-        # Use the maximum of clinical risk and model risk for conservative approach
-        final_risk_score = max(ensemble_score, clinical_risk['risk_score'])
-        
-        if final_risk_score > 0.7:
-            ensemble_level = 'High'
-        elif final_risk_score > 0.3:
-            ensemble_level = 'Medium'
-        else:
-            ensemble_level = 'Low'
-        
-        # Generate risk trajectory (simulate last 24 hours)
-        risk_trajectory = generate_sample_trajectory(final_risk_score)
-        
-        # Generate feature importance
-        feature_importance = generate_feature_importance_from_dict(patient_dict)
-        
-        return {
-            'patient_id': patient_dict['patient_id'],
-            'admission_time': (datetime.now() - timedelta(hours=24)).isoformat(),
-            'current_time': datetime.now().isoformat(),
-            'vital_signs': {
-                'heart_rate': int(patient_dict.get('heart_rate', 80)),
-                'blood_pressure_systolic': int(patient_dict.get('sbp', 120)),
-                'blood_pressure_diastolic': int(patient_dict.get('dbp', 80)),
-                'temperature': round(patient_dict.get('temperature', 37.0), 1),
-                'respiratory_rate': int(patient_dict.get('respiratory_rate', 16)),
-                'oxygen_saturation': int(patient_dict.get('oxygen_saturation', 95))
-            },
-            'lab_values': {
-                'white_blood_cells': round(patient_dict.get('wbc', 8.0), 1),
-                'lactate': round(patient_dict.get('lactate', 1.0), 1),
-                'creatinine': round(patient_dict.get('creatinine', 1.0), 1),
-                'bilirubin': round(patient_dict.get('bilirubin_total', 1.0), 1),
-                'platelets': int(patient_dict.get('platelets', 250))
-            },
-            'clinical_scores': {
-                'sirs_score': sirs_score,
-                'qsofa_score': qsofa_score,
-                'news2_score': news2_score,
-                'sofa_score': sofa_score
-            },
-            'model_predictions': model_predictions,
-            'ensemble_prediction': {
-                'average_risk_score': float(final_risk_score),
-                'risk_level': ensemble_level,
-                'agreement_score': 0.85,
-                'recommended_action': get_recommendation(ensemble_level),
-                'clinical_risk_factors': clinical_risk['risk_factors'],
-                'risk_details': clinical_risk['risk_details']
-            },
-            'risk_trajectory': risk_trajectory,
-            'feature_importance': feature_importance,
-            'is_manual_entry': True
-        }
-        
-    except Exception as e:
-        print(f"Error in generate_patient_data_from_dict: {e}")
-        # Fallback to basic structure
-        return {
-            'patient_id': patient_dict.get('patient_id', 'Unknown'),
-            'admission_time': datetime.now().isoformat(),
-            'current_time': datetime.now().isoformat(),
-            'vital_signs': {},
-            'lab_values': {},
-            'clinical_scores': {},
-            'model_predictions': {},
-            'ensemble_prediction': {
-                'average_risk_score': 0.5,
-                'risk_level': 'Medium',
-                'agreement_score': 0.5,
-                'recommended_action': 'Monitor closely'
-            },
-            'risk_trajectory': [],
-            'feature_importance': [],
-            'is_manual_entry': True,
-            'error': str(e)
-        }
-
-def generate_real_model_predictions(patient_dict):
-    """Generate predictions using trained models if available"""
-    try:
-        import pickle
-        import json
-        
-        # Try to load trained model artifacts
-        with open('outputs/feature_list.json', 'r') as f:
-            feature_list = json.load(f)
-        
-        with open('outputs/scaler_final.pkl', 'rb') as f:
-            scaler = pickle.load(f)
-        
-        with open('outputs/imputer_final.pkl', 'rb') as f:
-            imputer = pickle.load(f)
-        
-        with open('outputs/thresholds.json', 'r') as f:
-            thresholds = json.load(f)
-        
-        # Load the trained model
-        model = pickle.load(open('outputs/model_final_hgb.pkl', 'rb'))
-        
-        # Map patient data to feature list
-        patient_array = []
-        for feature in feature_list:
-            if feature in patient_dict:
-                patient_array.append(patient_dict[feature])
-            else:
-                # Use default values for missing features
-                defaults = {
-                    'age': 65, 'heart_rate': 80, 'sbp': 120, 'dbp': 80, 'map': 75,
-                    'temperature': 37, 'respiratory_rate': 16, 'oxygen_saturation': 95,
-                    'fio2': 21, 'ph': 7.4, 'paco2': 40, 'sao2': 95, 'base_excess': 0,
-                    'hco3': 24, 'lactate': 1.5, 'wbc': 8, 'platelets': 250,
-                    'creatinine': 1.0, 'bilirubin_total': 1.0
-                }
-                patient_array.append(defaults.get(feature, 0))
-        
-        patient_array = np.array(patient_array).reshape(1, -1)
-        
-        # Apply imputation and scaling
-        patient_array = imputer.transform(patient_array)
-        patient_array = scaler.transform(patient_array)
-        
-        # Make prediction
-        risk_score = model.predict_proba(patient_array)[0][1]
-        
-        # Determine risk level
-        if risk_score > thresholds.get('high_threshold', 0.7):
-            risk_level = 'High'
-        elif risk_score > thresholds.get('medium_threshold', 0.3):
-            risk_level = 'Medium'
-        else:
-            risk_level = 'Low'
-        
-        # Generate predictions for all models (using the same risk score for simplicity)
-        model_predictions = {
-            'grud': {'risk_score': risk_score, 'risk_level': risk_level, 'confidence': 0.85},
-            'lstm': {'risk_score': risk_score * 0.95, 'risk_level': risk_level, 'confidence': 0.82},
-            'cnn_lstm': {'risk_score': risk_score * 1.05, 'risk_level': risk_level, 'confidence': 0.88},
-            'transformer': {'risk_score': risk_score * 0.98, 'risk_level': risk_level, 'confidence': 0.80},
-            'logistic_regression': {'risk_score': risk_score * 0.92, 'risk_level': risk_level, 'confidence': 0.75},
-            'random_forest': {'risk_score': risk_score * 1.02, 'risk_level': risk_level, 'confidence': 0.90},
-            'xgboost': {'risk_score': risk_score, 'risk_level': risk_level, 'confidence': 0.87}
-        }
-        
-        return model_predictions
-        
-    except (FileNotFoundError, pickle.UnpicklingError, Exception) as e:
-        print(f"Model loading failed: {e}")
-        raise e
-
-def generate_simplified_predictions(patient_dict):
-    """Generate simplified predictions based on clinical rules"""
-    # Use clinical risk calculation as base
-    clinical_risk = calculate_clinical_risk(patient_dict)
-    base_risk = clinical_risk['risk_score']
-    
-    # Add some variation for different models
-    model_predictions = {
-        'grud': {'risk_score': base_risk, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.8},
-        'lstm': {'risk_score': base_risk * 0.95, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.75},
-        'cnn_lstm': {'risk_score': base_risk * 1.05, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.82},
-        'transformer': {'risk_score': base_risk * 0.98, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.78},
-        'logistic_regression': {'risk_score': base_risk * 0.92, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.70},
-        'random_forest': {'risk_score': base_risk * 1.02, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.85},
-        'xgboost': {'risk_score': base_risk, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.80}
-    }
-    
-    return model_predictions
-
-def generate_feature_importance_from_dict(patient_dict):
-    """Generate feature importance from patient dictionary"""
-    importance = []
-    
-    # Calculate importance based on clinical significance
-    features = [
-        ('lactate', patient_dict.get('lactate', 1.5), 0.3),
-        ('heart_rate', patient_dict.get('heart_rate', 80), 0.25),
-        ('temperature', patient_dict.get('temperature', 37), 0.2),
-        ('respiratory_rate', patient_dict.get('respiratory_rate', 16), 0.15),
-        ('map', patient_dict.get('map', 75), 0.1)
-    ]
-    
-    for feature, value, base_importance in features:
-        # Adjust importance based on how abnormal the value is
-        if feature == 'lactate':
-            if value > 2.0:
-                importance.append({'feature': feature, 'importance': base_importance * 1.5, 'value': value})
-            else:
-                importance.append({'feature': feature, 'importance': base_importance, 'value': value})
-        elif feature == 'heart_rate':
-            if value > 100:
-                importance.append({'feature': feature, 'importance': base_importance * 1.3, 'value': value})
-            else:
-                importance.append({'feature': feature, 'importance': base_importance, 'value': value})
-        elif feature == 'temperature':
-            if value > 38.3 or value < 36:
-                importance.append({'feature': feature, 'importance': base_importance * 1.4, 'value': value})
-            else:
-                importance.append({'feature': feature, 'importance': base_importance, 'value': value})
-        else:
-            importance.append({'feature': feature, 'importance': base_importance, 'value': value})
-    
-    # Sort by importance
-    importance.sort(key=lambda x: x['importance'], reverse=True)
-    return importance[:5]
 
 def log_alert(patient_id, timestamp, risk_score, top_features, alert_type):
     """Log all alerts with justification"""
