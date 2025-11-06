@@ -318,13 +318,17 @@ class SepsisPredictionIntegration:
     def _load_preprocessing(self):
         """Load preprocessing components"""
         try:
+            # Combined logic: Try several candidate paths, support both .pkl and .joblib
             scaler_candidates = [
                 'outputs/models/scaler.pkl',
                 'outputs/models/scaler.joblib',
                 'outputs/cache/scaler.joblib',
-                'scaler_lr.pkl'
+                'scaler_lr.pkl',
+                'outputs/scaler_final.pkl',
+                'Capstone/outputs/models/scaler.pkl'
             ]
 
+            self.scaler = None
             for path in scaler_candidates:
                 if not os.path.exists(path):
                     continue
@@ -334,7 +338,11 @@ class SepsisPredictionIntegration:
                     else:
                         with open(path, 'rb') as f:
                             self.scaler = pickle.load(f)
-                    print(f"✅ Loaded scaler from {path}")
+                    # Check if scaler is fitted (has mean_)
+                    if hasattr(self.scaler, 'mean_') and self.scaler.mean_ is not None:
+                        print(f"✅ Loaded fitted scaler from {path}")
+                    else:
+                        print(f"⚠️ Loaded scaler from {path} but it's not fitted")
                     break
                 except Exception as exc:
                     print(f"⚠️ Failed loading scaler at {path}: {exc}")
@@ -342,7 +350,6 @@ class SepsisPredictionIntegration:
             if self.scaler is None:
                 self.scaler = StandardScaler()
                 print("⚠️ No pretrained scaler found. A new StandardScaler will be fitted on incoming data.")
-
         except Exception as e:
             print(f"⚠️ Error loading preprocessing: {e}")
             self.scaler = StandardScaler()
@@ -356,11 +363,39 @@ class SepsisPredictionIntegration:
             else:
                 df = patient_data.copy()
 
+            # If Series, convert to DataFrame
             if isinstance(df, pd.Series):
                 df = df.to_frame().T
 
             df = df.reset_index(drop=True)
 
+            # Handle categorical columns (Gender, Unit1, Unit2)
+            if 'Gender' in df.columns:
+                # Convert Gender to numeric: Male=1, Female=0
+                df['Gender'] = df['Gender'].map({'Male': 1, 'Female': 0, 'M': 1, 'F': 0}).fillna(0)
+
+            if 'Unit1' in df.columns:
+                df['Unit1'] = pd.to_numeric(df['Unit1'], errors='coerce').fillna(0)
+
+            if 'Unit2' in df.columns:
+                df['Unit2'] = pd.to_numeric(df['Unit2'], errors='coerce').fillna(0)
+
+            # Default values for common features (used when feature is missing)
+            # If class/instance has self.feature_defaults, prefer it, else fallback defaults
+            default_values = getattr(self, 'feature_defaults', None)
+            if default_values is None:
+                default_values = {
+                    'HR': 80, 'O2Sat': 95, 'Temp': 37, 'SBP': 120, 'MAP': 75, 'DBP': 80,
+                    'Resp': 16, 'EtCO2': 40, 'BaseExcess': 0, 'HCO3': 24, 'FiO2': 21,
+                    'pH': 7.4, 'PaCO2': 40, 'SaO2': 95, 'AST': 30, 'BUN': 15,
+                    'Alkalinephos': 100, 'Calcium': 9, 'Chloride': 100, 'Creatinine': 1.0,
+                    'Bilirubin_direct': 0.2, 'Lactate': 1.0, 'Magnesium': 2.0, 'Phosphate': 3.5,
+                    'Potassium': 4.0, 'Bilirubin_total': 1.0, 'TroponinI': 0.01, 'Hct': 40,
+                    'Hgb': 12, 'PTT': 30, 'WBC': 8, 'Fibrinogen': 300, 'Platelets': 250,
+                    'Age': 65, 'Gender': 0, 'Unit1': 0, 'Unit2': 0, 'HospAdmTime': 0, 'ICULOS': 0
+                }
+
+            # Build features and observation mask in the same way as the HEAD version
             feature_columns: Dict[str, pd.Series] = {}
             for feature in self.feature_names:
                 if feature in df.columns:
@@ -373,29 +408,48 @@ class SepsisPredictionIntegration:
             observation_mask = (~df_features.isna()).astype(np.float32).values
 
             for feature in self.feature_names:
-                default_value = self.feature_defaults.get(feature)
-                fill_value = 0.0 if default_value is None else default_value
-                df_features[feature].fillna(fill_value, inplace=True)
+                default_value = default_values.get(feature, 0.0)
+                df_features[feature].fillna(default_value, inplace=True)
 
             feature_matrix = df_features.astype(np.float32).values
 
+            # Scale features if scaler is available and fitted
             if self.scaler is not None:
                 try:
-                    scaled_features = self.scaler.transform(feature_matrix)
-                except NotFittedError:
-                    self.scaler.fit(feature_matrix)
-                    scaled_features = self.scaler.transform(feature_matrix)
+                    # Check if scaler is fitted
+                    is_fitted = hasattr(self.scaler, 'mean_') and self.scaler.mean_ is not None
+
+                    if is_fitted:
+                        # Check if scaler expects the same number of features
+                        if hasattr(self.scaler, 'n_features_in_'):
+                            expected_features = self.scaler.n_features_in_
+                            if feature_matrix.shape[1] != expected_features:
+                                # Try to use only the first N features if we have more
+                                if feature_matrix.shape[1] > expected_features:
+                                    feature_matrix = feature_matrix[:, :expected_features]
+                                else:
+                                    # Pad with zeros if we have fewer features
+                                    padding = np.zeros((feature_matrix.shape[0], expected_features - feature_matrix.shape[1]))
+                                    feature_matrix = np.hstack([feature_matrix, padding])
+                        scaled_features = self.scaler.transform(feature_matrix)
+                    else:
+                        # Scaler not fitted - avoid fitting on single sample
+                        scaled_features = feature_matrix
                 except Exception as exc:
                     print(f"⚠️ Falling back to unscaled features: {exc}")
                     scaled_features = feature_matrix
             else:
                 scaled_features = feature_matrix
 
+            # For compatibility, return feature names as the third return value
             return scaled_features.astype(np.float32), observation_mask, self.feature_names
 
         except Exception as e:
             print(f"❌ Error preprocessing data: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None, []
+
     
     def predict_baseline_models(self, patient_data):
         """Get predictions from Person B's baseline models"""
@@ -411,13 +465,31 @@ class SepsisPredictionIntegration:
             # Get predictions from each baseline model
             for name, model in self.baseline_models.items():
                 try:
+                    # Check what features the model expects
+                    X_for_model = X_processed.copy()
+                    
+                    if hasattr(model, 'n_features_in_'):
+                        expected_features = model.n_features_in_
+                        current_features = X_for_model.shape[1]
+                        
+                        if current_features != expected_features:
+                            if current_features > expected_features:
+                                # Use only the first N features
+                                X_for_model = X_for_model[:, :expected_features]
+                            else:
+                                # Pad with zeros
+                                padding = np.zeros((X_for_model.shape[0], expected_features - current_features))
+                                X_for_model = np.hstack([X_for_model, padding])
+                    
                     if hasattr(model, 'predict_proba'):
-                        probs = model.predict_proba(X_processed)
-                        prob = float(np.atleast_2d(probs)[-1, 1])
+                        prob = model.predict_proba(X_for_model)[0][1]
                     else:
-                        preds = model.predict(X_processed)
-                        prob = float(np.atleast_1d(preds)[-1])
-
+                        prob = model.predict(X_for_model)[0]
+                        # If predict returns binary, convert to probability-like score
+                        if isinstance(prob, (int, np.integer)):
+                            prob = float(prob)
+                        elif prob > 1.0:
+                            prob = prob / 100.0  # Convert percentage to probability
                     predictions[name] = {
                         'risk_score': prob,
                         'risk_level': 'High' if prob > 0.7 else 'Medium' if prob > 0.3 else 'Low',
@@ -425,6 +497,8 @@ class SepsisPredictionIntegration:
                     }
                 except Exception as e:
                     print(f"⚠️ Error with {name}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     predictions[name] = {
                         'risk_score': 0.5,
                         'risk_level': 'Medium',

@@ -684,10 +684,46 @@ def show_model_predictions(risk_data):
         st.warning("No model predictions available from the integration service.")
         return
 
-    # Create comparison chart
-    models = list(predictions.keys())
-    scores = [predictions[model]['risk_score'] for model in models]
-    confidences = [predictions[model]['confidence'] for model in models]
+    # Filter out non-model predictions (like 'clinical_scores')
+    # and only include predictions that have the expected structure
+    model_predictions = {}
+    for model_name, pred in predictions.items():
+        # Skip non-model entries like 'clinical_scores'
+        if model_name == 'clinical_scores' or not isinstance(pred, dict):
+            continue
+        # Only include if it has risk_score (or we can provide a default)
+        # This ensures we only process actual model predictions
+        if 'risk_score' in pred or any(key in pred for key in ['risk_level', 'confidence']):
+            model_predictions[model_name] = pred
+    
+    if not model_predictions:
+        st.warning("No valid model predictions found. Predictions may be in an unexpected format.")
+        return
+
+    # Create comparison chart - safely extract scores and confidences
+    models = list(model_predictions.keys())
+    scores = []
+    confidences = []
+    
+    for model in models:
+        pred = model_predictions[model]
+        # Safely get risk_score with default
+        risk_score = pred.get('risk_score', 0.5)
+        # Handle if risk_score is not a number
+        try:
+            risk_score = float(risk_score)
+        except (ValueError, TypeError):
+            risk_score = 0.5
+        
+        # Safely get confidence with default
+        confidence = pred.get('confidence', 0.7)
+        try:
+            confidence = float(confidence)
+        except (ValueError, TypeError):
+            confidence = 0.7
+        
+        scores.append(risk_score)
+        confidences.append(confidence)
     
     # Model comparison chart
     fig = go.Figure()
@@ -722,34 +758,37 @@ def show_model_predictions(risk_data):
     
     # Model details with confidence intervals
     st.subheader("Detailed Model Results")
-    for model, pred in predictions.items():
+    for model, pred in model_predictions.items():
         col1, col2, col3, col4 = st.columns(4)
         
+        # Safely extract values with defaults
+        risk_score = float(pred.get('risk_score', 0.5))
+        risk_level = pred.get('risk_level', 'Medium')
+        confidence = float(pred.get('confidence', 0.7))
+        
         # Add confidence interval
-        ci_lower = max(0, pred['risk_score'] - 0.05)
-        ci_upper = min(1, pred['risk_score'] + 0.05)
+        ci_lower = max(0, risk_score - 0.05)
+        ci_upper = min(1, risk_score + 0.05)
         
         with col1:
             st.metric(
                 f"{model.upper()}", 
-                f"{pred['risk_score']:.3f}",
+                f"{risk_score:.3f}",
                 f"CI: [{ci_lower:.3f}, {ci_upper:.3f}]"
             )
         with col2:
-            st.write(f"Level: {pred['risk_level']}")
+            st.write(f"Level: {risk_level}")
         with col3:
-            st.write(f"Confidence: {pred['confidence']:.2f}")
+            st.write(f"Confidence: {confidence:.2f}")
         with col4:
-            status = "✅" if pred['confidence'] > 0.7 else "⚠️"
+            status = "✅" if confidence > 0.7 else "⚠️"
             st.write(f"Status: {status}")
     
     # Model uncertainty visualization
     st.subheader("Model Uncertainty Analysis")
     
-    # Create uncertainty plot
-    models = list(predictions.keys())
-    scores = [predictions[model]['risk_score'] for model in models]
-    confidences = [predictions[model]['confidence'] for model in models]
+    # Create uncertainty plot (reuse the filtered data)
+    # models, scores, and confidences are already defined above
     
     fig_uncertainty = go.Figure()
     
