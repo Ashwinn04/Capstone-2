@@ -8,10 +8,9 @@ import pickle
 import json
 import os
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
-from sklearn.exceptions import NotFittedError
 from sklearn.preprocessing import StandardScaler
 import joblib
 import warnings
@@ -129,6 +128,7 @@ class SepsisPredictionIntegration:
         self.scaler = None
         self.feature_defaults: Dict[str, float] = {}
         self.is_initialized = False
+        self._use_rule_based_baselines = False
 
         # Initialize the system
         self._initialize_system()
@@ -263,10 +263,14 @@ class SepsisPredictionIntegration:
                     print(f"⚠️ Trained artifact for {name} not found. Checked: {paths}")
 
             if not self.baseline_models:
-                print("⚠️ No baseline model artifacts were loaded. Baseline predictions will be unavailable until artifacts are provided.")
+                print("⚠️ No baseline model artifacts were loaded. Falling back to rule-based baseline estimators.")
+                self._use_rule_based_baselines = True
+            else:
+                self._use_rule_based_baselines = False
 
         except Exception as e:
             print(f"⚠️ Error loading baseline models: {e}")
+            self._use_rule_based_baselines = True
 
     def _load_first_available_model(self, paths: List[str]):
         """Helper to load the first existing model from a list of candidate paths."""
@@ -504,6 +508,67 @@ class SepsisPredictionIntegration:
             return None, None, []
 
     
+    def _get_patient_record(self, patient_data):
+        """Normalize various patient data inputs into a single dictionary."""
+        if isinstance(patient_data, pd.DataFrame):
+            return patient_data.iloc[-1].to_dict()
+        if isinstance(patient_data, dict):
+            return patient_data
+        try:
+            return dict(patient_data)
+        except Exception:
+            return {}
+
+    def _generate_rule_based_baseline_predictions(self, patient_record, clinical_scores):
+        """Generate heuristic baseline predictions when trained models are unavailable."""
+        sirs_score = clinical_scores.get('sirs', 0)
+        qsofa_score = clinical_scores.get('qsofa', 0)
+        sofa_score = clinical_scores.get('sofa', 0)
+
+        hr = float(patient_record.get('HR', 80))
+        map_ = float(patient_record.get('MAP', 75))
+        lactate = float(patient_record.get('Lactate', 1.5))
+        wbc = float(patient_record.get('WBC', 8))
+        temp = float(patient_record.get('Temp', 37.0))
+
+        hr_component = np.clip((hr - 90) / 45.0, 0.0, 1.0)
+        map_component = np.clip((80 - map_) / 35.0, 0.0, 1.0)
+        lactate_component = np.clip((lactate - 2.0) / 4.0, 0.0, 1.0)
+        wbc_component = np.clip((abs(wbc - 8) - 4) / 8.0, 0.0, 1.0)
+        temp_component = np.clip((abs(temp - 37.0) - 1.0) / 3.0, 0.0, 1.0)
+
+        physiologic_modifier = (
+            0.25 * hr_component
+            + 0.25 * lactate_component
+            + 0.2 * map_component
+            + 0.2 * wbc_component
+            + 0.1 * temp_component
+        )
+
+        def clamp_probability(value: float) -> float:
+            return float(np.clip(value, 0.01, 0.99))
+
+        lr_risk = clamp_probability(0.12 + sirs_score * 0.18 + qsofa_score * 0.22 + sofa_score * 0.12 + physiologic_modifier)
+        rf_risk = clamp_probability(0.08 + sirs_score * 0.15 + qsofa_score * 0.20 + sofa_score * 0.10 + physiologic_modifier * 0.9)
+        xgb_risk = clamp_probability(0.10 + sirs_score * 0.16 + qsofa_score * 0.18 + sofa_score * 0.11 + physiologic_modifier * 1.1)
+
+        confidence_boost = float(np.clip(0.55 + physiologic_modifier * 0.35, 0.55, 0.9))
+
+        def package(risk_value: float) -> Dict[str, Any]:
+            level = 'High' if risk_value > 0.7 else 'Medium' if risk_value > 0.3 else 'Low'
+            return {
+                'risk_score': risk_value,
+                'risk_level': level,
+                'confidence': confidence_boost,
+                'source': 'rule_based'
+            }
+
+        return {
+            'logistic_regression': package(lr_risk),
+            'random_forest': package(rf_risk),
+            'xgboost': package(xgb_risk)
+        }
+
     def predict_baseline_models(self, patient_data):
         """Get predictions from Person B's baseline models"""
         predictions = {}
@@ -514,6 +579,9 @@ class SepsisPredictionIntegration:
 
             if X_processed is None:
                 return predictions
+
+            patient_record = self._get_patient_record(patient_data)
+            clinical_scores = self._calculate_clinical_scores(patient_data)
 
             # Get predictions from each baseline model
             for name, model in self.baseline_models.items():
@@ -567,7 +635,8 @@ class SepsisPredictionIntegration:
                     predictions[name] = {
                         'risk_score': prob,
                         'risk_level': 'High' if prob > 0.7 else 'Medium' if prob > 0.3 else 'Low',
-                        'confidence': confidence
+                        'confidence': confidence,
+                        'source': 'trained_model'
                     }
                 except Exception as e:
                     print(f"⚠️ Error with {name}: {e}")
@@ -576,11 +645,23 @@ class SepsisPredictionIntegration:
                     predictions[name] = {
                         'risk_score': 0.5,
                         'risk_level': 'Medium',
-                        'confidence': 0.5
+                        'confidence': 0.5,
+                        'source': 'model_error'
                     }
-            
+
+            if self._use_rule_based_baselines or not self.baseline_models:
+                rule_based = self._generate_rule_based_baseline_predictions(patient_record, clinical_scores)
+                for model_name, pred in rule_based.items():
+                    predictions[model_name] = pred
+            else:
+                missing_models = {"logistic_regression", "random_forest", "xgboost"} - set(self.baseline_models.keys())
+                if missing_models:
+                    rule_based = self._generate_rule_based_baseline_predictions(patient_record, clinical_scores)
+                    for model_name in missing_models:
+                        predictions[model_name] = rule_based[model_name]
+
             # Calculate clinical scores
-            predictions['clinical_scores'] = self._calculate_clinical_scores(patient_data)
+            predictions['clinical_scores'] = clinical_scores
             
         except Exception as e:
             print(f"❌ Error in baseline predictions: {e}")
@@ -625,15 +706,7 @@ class SepsisPredictionIntegration:
         scores = {}
 
         try:
-            if isinstance(patient_data, pd.DataFrame):
-                record = patient_data.iloc[-1].to_dict()
-            elif isinstance(patient_data, dict):
-                record = patient_data
-            else:
-                try:
-                    record = dict(patient_data)
-                except Exception:
-                    record = {}
+            record = self._get_patient_record(patient_data)
 
             # SIRS Score
             sirs_score = 0
@@ -703,14 +776,32 @@ class SepsisPredictionIntegration:
             all_predictions = {**baseline_preds, **dl_preds}
             
             # Calculate ensemble prediction
-            risk_scores = []
+            weighted_scores = []
+            confidences = []
             for pred in all_predictions.values():
                 if isinstance(pred, dict) and 'risk_score' in pred:
-                    risk_scores.append(pred['risk_score'])
-            
-            if risk_scores:
-                ensemble_score = np.mean(risk_scores)
+                    confidence = float(pred.get('confidence', 0.5))
+                    if confidence <= 0.0:
+                        continue
+                    weighted_scores.append(pred['risk_score'] * confidence)
+                    confidences.append(confidence)
+
+            high_confidence_high_risk = False
+            max_high_risk_score = 0.0
+
+            if confidences:
+                ensemble_score = float(np.sum(weighted_scores) / np.sum(confidences))
+                for pred in all_predictions.values():
+                    if isinstance(pred, dict) and pred.get('risk_level') == 'High':
+                        confidence = float(pred.get('confidence', 0.0))
+                        if confidence >= 0.75:
+                            high_confidence_high_risk = True
+                            max_high_risk_score = max(max_high_risk_score, float(pred.get('risk_score', 0.0)))
+
                 ensemble_level = 'High' if ensemble_score > 0.7 else 'Medium' if ensemble_score > 0.3 else 'Low'
+                if high_confidence_high_risk:
+                    ensemble_level = 'High'
+                    ensemble_score = max(ensemble_score, max_high_risk_score)
             else:
                 ensemble_score = 0.5
                 ensemble_level = 'Medium'
