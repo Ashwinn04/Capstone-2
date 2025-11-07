@@ -140,8 +140,8 @@ class ModelTrainer:
             delta_t = delta_t.to(self.device)
             targets = targets.to(self.device)
             
-            use_cuda_amp = (self.device == 'cuda')
-            with torch.autocast(device_type=('cuda' if use_cuda_amp else 'cpu'), dtype=torch.float16, enabled=use_cuda_amp):
+            use_amp = self.device == 'cuda'  # AMP is only for CUDA
+            with torch.autocast(device_type=self.device, dtype=torch.float16, enabled=use_amp):
                 # Forward pass
                 outputs = self.model(features, masks, delta_t)
                 
@@ -154,7 +154,7 @@ class ModelTrainer:
             
             # Backward pass
             optimizer.zero_grad()
-            if use_cuda_amp:
+            if use_amp:
                 scaler.scale(loss).backward()
                 
                 # Gradient clipping
@@ -206,8 +206,8 @@ class ModelTrainer:
                 delta_t = delta_t.to(self.device)
                 targets = targets.to(self.device)
                 
-                use_cuda_amp = (self.device == 'cuda')
-                with torch.autocast(device_type=('cuda' if use_cuda_amp else 'cpu'), dtype=torch.float16, enabled=use_cuda_amp):
+                use_amp = self.device == 'cuda'  # AMP is only for CUDA
+                with torch.autocast(device_type=self.device, dtype=torch.float16, enabled=use_amp):
                     outputs = self.model(features, masks, delta_t)
 
                     if outputs.dim() > 1 and targets.dim() == 1:
@@ -272,10 +272,16 @@ class ModelTrainer:
 
         # Setup scheduler
         if scheduler_config['name'] == 'CosineAnnealing':
-            T_max = epochs - scheduler_config['warmup_epochs']
-            scheduler = CosineAnnealingLR(optimizer, T_max=T_max, eta_min=1e-5)
+            T_max = epochs - scheduler_config.get('warmup_epochs', 0)
+            eta_min = scheduler_config.get('eta_min', 1e-5)
+            scheduler = CosineAnnealingLR(optimizer, T_max=T_max, eta_min=eta_min)
         else: # Default to ReduceLROnPlateau
-            scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
+            mode = scheduler_config.get('mode', 'max')
+            factor = scheduler_config.get('factor', 0.5)
+            patience = scheduler_config.get('patience', 5)
+            min_lr = scheduler_config.get('min_lr', 1e-6)
+            scheduler = ReduceLROnPlateau(optimizer, mode=mode, factor=factor, 
+                                         patience=patience, min_lr=min_lr)
 
         # Warmup scheduler
         warmup_epochs = scheduler_config.get('warmup_epochs', 0)

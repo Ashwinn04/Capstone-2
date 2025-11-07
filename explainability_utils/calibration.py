@@ -130,29 +130,17 @@ class ModelCalibrator:
                 return torch.nn.functional.softmax(calibrated_logits, dim=-1)[:, 1].cpu().numpy()
 
     def save(self, filepath: str):
-        """Save the fitted calibrator to a file."""
+        """Save the calibrator to a file."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        if self.method == 'temperature':
-            params = {'temperature': self.calibrator.temperature.item()}
-            with open(filepath.replace('.joblib', '.json'), 'w') as f:
-                json.dump(params, f)
-        else:
-            joblib.dump(self.calibrator, filepath)
+        joblib.dump({'method': self.method, 'model': self.calibrator}, filepath)
         print(f"Saved calibrator to {filepath}")
 
-    @classmethod
-    def load(cls, filepath: str, method: str) -> 'ModelCalibrator':
+    @staticmethod
+    def load(filepath: str) -> 'ModelCalibrator':
         """Load a calibrator from a file."""
-        calibrator = cls(method=method)
-        if method == 'temperature':
-            with open(filepath.replace('.joblib', '.json'), 'r') as f:
-                params = json.load(f)
-            calibrator.calibrator = TemperatureScaling()
-            # Ensure float32 for MPS compatibility
-            calibrator.calibrator.temperature = torch.nn.Parameter(torch.tensor([params['temperature']], dtype=torch.float32))
-        else:
-            calibrator.calibrator = joblib.load(filepath)
-        
+        data = joblib.load(filepath)
+        calibrator = ModelCalibrator(method=data['method'])
+        calibrator.calibrator = data['model']
         calibrator.is_fitted = True
         return calibrator
         
