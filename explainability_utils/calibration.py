@@ -72,7 +72,45 @@ class ModelCalibrator:
             return self.calibrator.predict_proba(y_pred.reshape(-1, 1))[:, 1]
         elif self.method == 'isotonic':
             return self.calibrator.predict(y_pred)
-    
+        elif self.method == 'temperature':
+            if logits is None:
+                raise ValueError("Logits are required for temperature scaling.")
+            with torch.no_grad():
+                # Ensure float32 for MPS compatibility
+                logits_tensor = torch.from_numpy(logits).float()
+                calibrated_logits = self.calibrator(logits_tensor)
+                # Handle both 2D and 1D logits
+                if calibrated_logits.dim() == 1:
+                    calibrated_logits = calibrated_logits.unsqueeze(0)
+                return torch.nn.functional.softmax(calibrated_logits, dim=-1)[:, 1].cpu().numpy()
+
+    def save(self, filepath: str):
+        """Save the fitted calibrator to a file."""
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        if self.method == 'temperature':
+            params = {'temperature': self.calibrator.temperature.item()}
+            with open(filepath.replace('.joblib', '.json'), 'w') as f:
+                json.dump(params, f)
+        else:
+            joblib.dump(self.calibrator, filepath)
+        print(f"Saved calibrator to {filepath}")
+
+    @classmethod
+    def load(cls, filepath: str, method: str) -> 'ModelCalibrator':
+        """Load a calibrator from a file."""
+        calibrator = cls(method=method)
+        if method == 'temperature':
+            with open(filepath.replace('.joblib', '.json'), 'r') as f:
+                params = json.load(f)
+            calibrator.calibrator = TemperatureScaling()
+            # Ensure float32 for MPS compatibility
+            calibrator.calibrator.temperature = torch.nn.Parameter(torch.tensor([params['temperature']], dtype=torch.float32))
+        else:
+            calibrator.calibrator = joblib.load(filepath)
+        
+        calibrator.is_fitted = True
+        return calibrator
+        
     def get_calibration_error(self, y_true: np.ndarray, y_pred: np.ndarray, 
                             n_bins: int = 10) -> float:
         """

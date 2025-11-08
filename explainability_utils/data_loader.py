@@ -7,6 +7,12 @@ import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 from typing import Tuple, List, Dict, Optional
 import warnings
+import os
+import json
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+import joblib
+
 warnings.filterwarnings('ignore')
 
 
@@ -15,8 +21,10 @@ class ICUDataset(Dataset):
     PyTorch Dataset for ICU time-series data with variable-length sequences
     """
     
-    def __init__(self, data: pd.DataFrame, sequence_length: int = 24, 
-                 prediction_horizon: int = 4, features: List[str] = None):
+    def __init__(self, data: pd.DataFrame, features: List[str],
+                 sequence_length: int = 48, 
+                 prediction_horizon: int = 6,
+                 step_size: int = 1):
         """
         Initialize ICU Dataset
         
@@ -25,17 +33,14 @@ class ICUDataset(Dataset):
             sequence_length: Maximum sequence length for padding
             prediction_horizon: Hours ahead to predict (4 or 6)
             features: List of feature column names
+            sequence_length: Maximum sequence length in hours
+            prediction_horizon: Hours ahead to predict sepsis
+            step_size: Step size for creating sequences in hours
         """
         self.data = data.copy()
         self.sequence_length = sequence_length
         self.prediction_horizon = prediction_horizon
-        
-        # Get feature columns (exclude Patient_ID, Time, Sepsis_Label)
-        if features is None:
-            self.features = [col for col in data.columns 
-                           if col not in ['Patient_ID', 'Time', 'Sepsis_Label']]
-        else:
-            self.features = features
+        self.step_size = step_size
             
         self.n_features = len(self.features)
         
@@ -90,13 +95,14 @@ class ICUDataset(Dataset):
         mask = torch.BoolTensor(seq['mask'])
         target = torch.LongTensor([seq['target']])
         
-        return features, mask, target
+        return features, mask, delta_t, target
 
 
 def create_data_loaders(train_data: pd.DataFrame, val_data: pd.DataFrame, 
-                       test_data: pd.DataFrame, batch_size: int = 32,
-                       sequence_length: int = 24, prediction_horizon: int = 4,
-                       features: List[str] = None) -> Tuple[DataLoader, DataLoader, DataLoader]:
+                       test_data: pd.DataFrame, features: List[str],
+                       batch_size: int = 64, sequence_length: int = 48, 
+                       prediction_horizon: int = 6, step_size: int = 1
+                       ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Create train, validation, and test data loaders
     
@@ -104,27 +110,28 @@ def create_data_loaders(train_data: pd.DataFrame, val_data: pd.DataFrame,
         train_data: Training data
         val_data: Validation data  
         test_data: Test data
-        batch_size: Batch size for training
-        sequence_length: Maximum sequence length
-        prediction_horizon: Prediction horizon in hours
         features: Feature column names
+        batch_size: Batch size for training
+        sequence_length: Maximum sequence length in hours
+        prediction_horizon: Prediction horizon in hours
+        step_size: Step size in hours for creating sequences
         
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
     """
     
     # Create datasets
-    train_dataset = ICUDataset(train_data, sequence_length, prediction_horizon, features)
-    val_dataset = ICUDataset(val_data, sequence_length, prediction_horizon, features)
-    test_dataset = ICUDataset(test_data, sequence_length, prediction_horizon, features)
+    train_dataset = ICUDataset(train_data, features, sequence_length, prediction_horizon, step_size)
+    val_dataset = ICUDataset(val_data, features, sequence_length, prediction_horizon, step_size)
+    test_dataset = ICUDataset(test_data, features, sequence_length, prediction_horizon, step_size)
     
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
-                             num_workers=0, pin_memory=False)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                           num_workers=0, pin_memory=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=0, pin_memory=False)
+                             num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False,
+                           num_workers=0, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size * 2, shuffle=False,
+                            num_workers=0, pin_memory=True)
     
     return train_loader, val_loader, test_loader
 

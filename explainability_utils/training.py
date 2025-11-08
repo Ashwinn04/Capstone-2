@@ -88,16 +88,33 @@ class ModelTrainer:
             masks = masks.to(self.device)
             targets = targets.to(self.device)
             
-            # Forward pass
-            optimizer.zero_grad()
-            outputs = self.model(features, masks)
-            
-            # Calculate loss
-            loss = criterion(outputs, targets.float())
+            use_cuda_amp = (self.device == 'cuda')
+            with torch.autocast(device_type=('cuda' if use_cuda_amp else 'cpu'), dtype=torch.float16, enabled=use_cuda_amp):
+                # Forward pass
+                outputs = self.model(features, masks, delta_t)
+                
+                # Squeeze outputs if necessary
+                if outputs.dim() > 1 and targets.dim() == 1:
+                    outputs = outputs.squeeze(-1)
+
+                # Calculate loss
+                loss = criterion(outputs, targets.float())
             
             # Backward pass
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad()
+            if use_cuda_amp:
+                scaler.scale(loss).backward()
+                
+                # Gradient clipping
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_value)
+                
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_value)
+                optimizer.step()
             
             total_loss += loss.item() * features.size(0)
             total_samples += features.size(0)
@@ -129,8 +146,14 @@ class ModelTrainer:
                 masks = masks.to(self.device)
                 targets = targets.to(self.device)
                 
-                outputs = self.model(features, masks)
-                loss = criterion(outputs, targets.float())
+                use_cuda_amp = (self.device == 'cuda')
+                with torch.autocast(device_type=('cuda' if use_cuda_amp else 'cpu'), dtype=torch.float16, enabled=use_cuda_amp):
+                    outputs = self.model(features, masks, delta_t)
+
+                    if outputs.dim() > 1 and targets.dim() == 1:
+                        outputs = outputs.squeeze(-1)
+                        
+                    loss = criterion(outputs, targets.float())
                 
                 total_loss += loss.item() * features.size(0)
                 total_samples += features.size(0)
@@ -177,11 +200,23 @@ class ModelTrainer:
         Returns:
             Training history dictionary
         """
-        # Setup optimizer and scheduler
-        optimizer = optim.Adam(self.model.parameters(), 
-                             lr=learning_rate, weight_decay=weight_decay)
-        scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, 
-                                    patience=5)
+        # Setup optimizer
+        if optimizer_config['name'] == 'AdamW':
+            optimizer = optim.AdamW(self.model.parameters(), lr=optimizer_config['lr'],
+                                    weight_decay=optimizer_config['weight_decay'])
+        else: # Default to Adam
+            optimizer = optim.Adam(self.model.parameters(), lr=optimizer_config['lr'],
+                                   weight_decay=optimizer_config.get('weight_decay', 1e-5))
+
+        # Setup scheduler
+        if scheduler_config['name'] == 'CosineAnnealing':
+            T_max = epochs - scheduler_config['warmup_epochs']
+            scheduler = CosineAnnealingLR(optimizer, T_max=T_max, eta_min=1e-5)
+        else: # Default to ReduceLROnPlateau
+            scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
+
+        # Warmup scheduler
+        warmup_epochs = scheduler_config.get('warmup_epochs', 0)
         
         # Setup loss function
         if class_weights is not None:
