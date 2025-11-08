@@ -86,12 +86,11 @@ class TorchModelEnsemble:
 
         batch_size, seq_len, num_features = features_tensor.shape
 
-        delta_t = torch.zeros((batch_size, seq_len, 1), dtype=torch.float32)
-
         member_scores: List[float] = []
         with torch.no_grad():
             for model in self.models:
-                logits = model(features_tensor, mask_tensor, delta_t)
+                # Models only take (features, masks) - not delta_t
+                logits = model(features_tensor, mask_tensor)
                 probs = torch.sigmoid(logits).cpu().numpy().flatten()
                 member_scores.extend(probs.tolist())
 
