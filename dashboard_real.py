@@ -1115,8 +1115,13 @@ def show_performance_metrics():
                 df_metrics = df_dl_metrics
                 st.subheader("Model Performance Comparison (Deep Learning Models)")
                 st.caption(f"Loaded from: {os.path.relpath(csv_path, project_root)}")
-            
-            st.dataframe(df_metrics, use_container_width=True)
+            # Ensure 'Model' column is string to avoid Arrow conversion errors
+            if 'Model' in df_metrics.columns:
+                try:
+                    df_metrics['Model'] = df_metrics['Model'].astype(str)
+                except Exception:
+                    pass
+            st.dataframe(df_metrics, width='stretch')
             
             # Accuracy bar chart if available
             if 'Accuracy' in df_metrics.columns:
@@ -1159,7 +1164,13 @@ def show_performance_metrics():
             if df_baseline is not None:
                 st.subheader("Baseline Model Performance")
                 st.caption("Loaded from: outputs/models/baseline_models_metrics.json")
-                st.dataframe(df_baseline, use_container_width=True)
+                # Ensure 'Model' column is string to avoid Arrow conversion errors
+                if 'Model' in df_baseline.columns:
+                    try:
+                        df_baseline['Model'] = df_baseline['Model'].astype(str)
+                    except Exception:
+                        pass
+                st.dataframe(df_baseline, width='stretch')
                 _show_metrics_visualizations(df_baseline)
             else:
                 st.info("Showing demo metrics.")
@@ -1169,7 +1180,13 @@ def show_performance_metrics():
         if df_baseline is not None:
             st.subheader("Baseline Model Performance")
             st.caption("Loaded from: outputs/models/baseline_models_metrics.json")
-            st.dataframe(df_baseline, use_container_width=True)
+            # Ensure 'Model' column is string to avoid Arrow conversion errors
+            if 'Model' in df_baseline.columns:
+                try:
+                    df_baseline['Model'] = df_baseline['Model'].astype(str)
+                except Exception:
+                    pass
+            st.dataframe(df_baseline, width='stretch')
             _show_metrics_visualizations(df_baseline)
         else:
             st.info("No saved evaluation found. Showing demo metrics.")
@@ -2234,14 +2251,13 @@ def main():
         export_performance_data()
     
     # Main dashboard tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📊 Risk Overview", 
         "🤖 Model Predictions", 
         "📈 Risk Trajectory", 
         "🧠 Explainability",
         "🧠 Dynamic Explainability",
         "👤 Patient Data",
-        "📊 Performance Metrics",
         "🏥 Clinical Workflow",
         "⚖️ Fairness Analysis"
     ])
@@ -2265,12 +2281,9 @@ def main():
         show_patient_data(patient_data)
     
     with tab7:
-        show_performance_metrics()
-    
-    with tab8:
         show_clinical_workflow(patient_data)
     
-    with tab9:
+    with tab8:
         show_fairness_analysis()
     
     # Footer removed per request

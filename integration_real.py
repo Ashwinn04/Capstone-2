@@ -144,9 +144,9 @@ class SepsisPredictionIntegration:
         # Allow temporarily disabling baseline models via env var (default: enabled now that models are trained)
         # Set DISABLE_BASELINES=1 to disable
         self.disable_baseline_models = str(os.getenv('DISABLE_BASELINES', '0')).lower() in ('1', 'true', 'yes')
-        # Allow temporarily disabling deep learning models (default: disabled per current request)
-        # Set DISABLE_DL=0 to enable
-        self.disable_deep_learning_models = str(os.getenv('DISABLE_DL', '1')).lower() in ('1', 'true', 'yes')
+        # Allow temporarily disabling deep learning models (default: enabled to use newly trained checkpoints)
+        # Set DISABLE_DL=1 to disable
+        self.disable_deep_learning_models = str(os.getenv('DISABLE_DL', '0')).lower() in ('1', 'true', 'yes')
         # Per-model thresholds loaded from training metrics (fallback to defaults if missing)
         self.baseline_thresholds: Dict[str, float] = {}
 
@@ -452,12 +452,12 @@ class SepsisPredictionIntegration:
                 },
                 'lstm': {
                     'class': LSTM,
-                    'init_args': {'hidden_size': 128, 'num_layers': 2, 'dropout': 0.3}
+                    'init_args': {'hidden_size': 64, 'num_layers': 2, 'dropout': 0.3}
                 },
                 'cnn_lstm': {
                     'class': CNNLSTM,
                     'init_args': {'hidden_size': 128, 'num_layers': 1, 'dropout': 0.3,
-                                  'cnn_filters': [64, 128], 'kernel_size': 3}
+                                  'cnn_filters': 128, 'kernel_size': 3}
                 },
                 'transformer': {
                     'class': Transformer,
@@ -493,7 +493,16 @@ class SepsisPredictionIntegration:
                             
                             try:
                                 model = cfg['class'](input_size=model_input_size, **cfg['init_args'])
-                                model.load_state_dict(loaded_obj, strict=False)  # Use strict=False for flexibility
+                                # Load only compatible tensor shapes to avoid size mismatch errors
+                                try:
+                                    model_state = model.state_dict()
+                                    compatible = {k: v for k, v in loaded_obj.items()
+                                                  if k in model_state and hasattr(model_state[k], 'shape') and hasattr(v, 'shape')
+                                                  and model_state[k].shape == v.shape}
+                                    model.load_state_dict(compatible, strict=False)
+                                except Exception as load_exc:
+                                    print(f"  ⚠️ Safe state_dict load failed for {name}_seed{seed}: {load_exc}")
+                                    continue
                                 models.append(model)
                             except (RuntimeError, KeyError, TypeError) as e:
                                 print(f"  ⚠️ Could not load state_dict for {name}_seed{seed}: {e}")
@@ -532,7 +541,16 @@ class SepsisPredictionIntegration:
                                     
                                     try:
                                         model = cfg['class'](input_size=model_input_size, **cfg['init_args'])
-                                        model.load_state_dict(loaded_obj, strict=False)  # Use strict=False for flexibility
+                                        # Load only compatible tensor shapes to avoid size mismatch errors
+                                        try:
+                                            model_state = model.state_dict()
+                                            compatible = {k: v for k, v in loaded_obj.items()
+                                                          if k in model_state and hasattr(model_state[k], 'shape') and hasattr(v, 'shape')
+                                                          and model_state[k].shape == v.shape}
+                                            model.load_state_dict(compatible, strict=False)
+                                        except Exception as load_exc:
+                                            print(f"  ⚠️ Safe state_dict load failed from {os.path.basename(fallback_path)}: {load_exc}")
+                                            continue
                                         models.append(model)
                                     except (RuntimeError, KeyError, TypeError) as e:
                                         print(f"  ⚠️ Could not load state_dict from {os.path.basename(fallback_path)}: {e}")
@@ -553,7 +571,7 @@ class SepsisPredictionIntegration:
                     # Determine the actual input size used by the loaded models
                     # Check the first model to see what input size it actually has
                     ensemble_input_size = input_size
-                    if models:
+                    if models and name != 'cnn_lstm':
                         first_model = models[0]
                         try:
                             # Try to infer from model parameters
@@ -567,6 +585,9 @@ class SepsisPredictionIntegration:
                                         break
                         except Exception:
                             pass  # Use default input_size
+                    # For CNN-LSTM, keep feature dimension from config/state_dict (do not overwrite with LSTM hidden dims)
+                    if name == 'cnn_lstm':
+                        ensemble_input_size = input_size
                     
                     self.deep_learning_models[name] = TorchModelEnsemble(name, models, ensemble_input_size, expected_seq_len)
                     print(f"✅ Loaded {name} ({len(models)} checkpoint(s))")

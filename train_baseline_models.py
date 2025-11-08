@@ -282,6 +282,27 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
     
     results = {}
     
+    # Model selection via env var TRAIN_ONLY (comma-separated): e.g., "xgboost" or "lr,rf"
+    train_only_env = os.getenv('TRAIN_ONLY', '').strip().lower()
+    if train_only_env:
+        selected = set(s.strip() for s in train_only_env.split(',') if s.strip())
+        # Map common aliases
+        alias_map = {
+            'lr': 'logistic_regression',
+            'logreg': 'logistic_regression',
+            'rf': 'random_forest',
+            'xgb': 'xgboost',
+            'hgb': 'xgboost'
+        }
+        normalized = set(alias_map.get(s, s) for s in selected)
+        train_lr = 'logistic_regression' in normalized
+        train_rf = 'random_forest' in normalized
+        train_xgb = 'xgboost' in normalized
+    else:
+        train_lr = True
+        train_rf = True
+        train_xgb = True
+    
     # Imputation and scaling
     print("\n" + "="*60)
     print("Preprocessing")
@@ -323,22 +344,23 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
     )
     print(f"✅ Train-sub: {X_tr_sub.shape}, Val: {X_val_sub.shape}")
 
-    # Apply SMOTE ONLY for LR on the train-sub set
+    # Apply SMOTE ONLY for LR on the train-sub set (if LR is selected)
     smote_applied = False
-    if SMOTE_AVAILABLE:
-        try:
-            pos = int(y_tr_sub.sum())
-            k_neighbors = 1 if pos <= 1 else min(5, pos - 1)
-            smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
-            X_tr_bal, y_tr_bal = smote.fit_resample(X_tr_sub, y_tr_sub)
-            print(f"✅ Applied SMOTE for LR only: {X_tr_sub.shape} -> {X_tr_bal.shape}")
-            smote_applied = True
-        except Exception as e:
-            print(f"⚠️ SMOTE failed for LR path ({e}), proceeding without it")
+    if train_lr:
+        if SMOTE_AVAILABLE:
+            try:
+                pos = int(y_tr_sub.sum())
+                k_neighbors = 1 if pos <= 1 else min(5, pos - 1)
+                smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
+                X_tr_bal, y_tr_bal = smote.fit_resample(X_tr_sub, y_tr_sub)
+                print(f"✅ Applied SMOTE for LR only: {X_tr_sub.shape} -> {X_tr_bal.shape}")
+                smote_applied = True
+            except Exception as e:
+                print(f"⚠️ SMOTE failed for LR path ({e}), proceeding without it")
+                X_tr_bal, y_tr_bal = X_tr_sub, y_tr_sub
+        else:
+            print("⚠️ imblearn not available; skipping SMOTE")
             X_tr_bal, y_tr_bal = X_tr_sub, y_tr_sub
-    else:
-        print("⚠️ imblearn not available; skipping SMOTE")
-        X_tr_bal, y_tr_bal = X_tr_sub, y_tr_sub
 
     # Save preprocessing components
     imputer_path = os.path.join(output_dir, 'baseline_imputer.pkl')
@@ -353,250 +375,24 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
     print(f"✅ Saved scaler to {scaler_path}")
 
     # 1/3. Logistic Regression (with light hyperparameter tuning)
-    print("\n" + "="*60)
-    print("Training Logistic Regression")
-    print("="*60)
-
-    lr_base = LogisticRegression(
-        class_weight=None if smote_applied else 'balanced',
-        max_iter=2000,
-        random_state=42,
-        solver='liblinear'
-    )
-    try:
-        lr_param_dist = {
-            'C': np.logspace(-3, 2, 20)
-        }
-        lr_search = RandomizedSearchCV(
-            lr_base,
-            param_distributions=lr_param_dist,
-            n_iter=10,
-            scoring='roc_auc',
-            cv=3,
-            n_jobs=-1,
+    if train_lr:
+        print("\n" + "="*60)
+        print("Training Logistic Regression")
+        print("="*60)
+        
+        lr_base = LogisticRegression(
+            class_weight=None if smote_applied else 'balanced',
+            max_iter=2000,
             random_state=42,
-            verbose=2
-        )
-        print(f"🔍 LR hyperparameter search: {lr_search.n_iter} candidates × {lr_search.cv} folds = {lr_search.n_iter * lr_search.cv} fits")
-        t0 = time.time()
-        lr_search.fit(X_tr_bal, y_tr_bal)
-        print(f"⏱️ LR search completed in {time.time() - t0:.1f}s")
-        lr_best = lr_search.best_estimator_
-        print(f"✅ LR best params: {lr_search.best_params_}")
-    except Exception as e:
-        print(f"⚠️ LR tuning failed ({e}), using defaults")
-        lr_best = lr_base
-
-    print("📏 Calibrating LR on validation (isotonic, prefit)...")
-    t0 = time.time()
-    # Fit LR on (possibly SMOTE) train-sub
-    lr_best.fit(X_tr_bal, y_tr_bal)
-    # Calibrate on true-prevalence validation set
-    lr_cal = CalibratedClassifierCV(lr_best, cv='prefit', method='isotonic')
-    lr_cal.fit(X_val_sub, y_val_sub)
-    print(f"⏱️ LR calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
-
-    y_prob_lr = lr_cal.predict_proba(X_test_fs)[:, 1]
-
-    # Find optimal threshold (F1-based)
-    opt_threshold_lr, _ = find_optimal_threshold(y_test, y_prob_lr, method='f1')
-    y_pred_lr = (y_prob_lr >= opt_threshold_lr).astype(int)
-
-    # Metrics
-    auroc_lr = roc_auc_score(y_test, y_prob_lr)
-    auprc_lr = average_precision_score(y_test, y_prob_lr)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred_lr).ravel()
-    sensitivity_lr = tp / (tp + fn) if (tp + fn) > 0 else 0
-    specificity_lr = tn / (tn + fp) if (tn + fp) > 0 else 0
-    precision_lr = tp / (tp + fp) if (tp + fp) > 0 else 0
-    f1_lr = 2 * precision_lr * sensitivity_lr / (precision_lr + sensitivity_lr) if (precision_lr + sensitivity_lr) > 0 else 0
-    brier_lr = brier_score_loss(y_test, y_prob_lr)
-
-    print(f"AUROC: {auroc_lr:.4f}")
-    print(f"AUPRC: {auprc_lr:.4f}")
-    print(f"Optimal Threshold: {opt_threshold_lr:.4f}")
-    print(f"Sensitivity (Recall): {sensitivity_lr:.4f}")
-    print(f"Specificity: {specificity_lr:.4f}")
-    print(f"Precision: {precision_lr:.4f}")
-    print(f"F1 Score: {f1_lr:.4f}")
-    print(f"Brier Score: {brier_lr:.4f}")
-
-    # Save model
-    lr_path = os.path.join(output_dir, 'logistic_regression.pkl')
-    with open(lr_path, 'wb') as f:
-        pickle.dump(lr_cal, f)
-    print(f"✅ Saved model to {lr_path}")
-
-    results['logistic_regression'] = {
-        'auroc': auroc_lr,
-        'auprc': auprc_lr,
-        'sensitivity': sensitivity_lr,
-        'specificity': specificity_lr,
-        'precision': precision_lr,
-        'f1': f1_lr,
-        'brier': brier_lr,
-        'optimal_threshold': float(opt_threshold_lr)
-    }
-
-    # 2/3. Random Forest (with light hyperparameter tuning)
-    print("\n" + "="*60)
-    print("Training Random Forest")
-    print("="*60)
-
-    rf_base = RandomForestClassifier(
-        class_weight='balanced_subsample',
-        random_state=42,
-        n_jobs=-1,
-        verbose=1
-    )
-    try:
-        rf_param_dist = {
-            'n_estimators': [200, 300, 500],
-            'max_depth': [10, 15, 20, None],
-            'min_samples_split': [2, 5, 10],
-            'min_samples_leaf': [1, 2, 4]
-        }
-        rf_search = RandomizedSearchCV(
-            rf_base,
-            param_distributions=rf_param_dist,
-            n_iter=12,
-            scoring='roc_auc',
-            cv=3,
-            n_jobs=-1,
-            random_state=42,
-            verbose=2
-        )
-        total_fits = rf_search.n_iter * rf_search.cv
-        print(f"🔍 RF hyperparameter search: {rf_search.n_iter} candidates × {rf_search.cv} folds = {total_fits} fits")
-        print("⏳ This step can take several minutes depending on CPU cores.")
-        t0 = time.time()
-        rf_search.fit(X_tr_sub, y_tr_sub)
-        print(f"⏱️ RF search completed in {time.time() - t0:.1f}s")
-        rf_best = rf_search.best_estimator_
-        print(f"✅ RF best params: {rf_search.best_params_}")
-    except Exception as e:
-        print(f"⚠️ RF tuning failed ({e}), using defaults")
-        rf_best = rf_base
-
-    print("📏 Calibrating RF (isotonic, cv=5)...")
-    t0 = time.time()
-    # Fit RF on original (no SMOTE) train-sub
-    rf_best.fit(X_tr_sub, y_tr_sub)
-    # Calibrate on true-prevalence validation set
-    rf_cal = CalibratedClassifierCV(rf_best, cv='prefit', method='isotonic')
-    rf_cal.fit(X_val_sub, y_val_sub)
-    print(f"⏱️ RF calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
-
-    y_prob_rf = rf_cal.predict_proba(X_test_fs)[:, 1]
-
-    # Find optimal threshold (F1-based)
-    opt_threshold_rf, _ = find_optimal_threshold(y_test, y_prob_rf, method='f1')
-    y_pred_rf = (y_prob_rf >= opt_threshold_rf).astype(int)
-
-    # Metrics
-    auroc_rf = roc_auc_score(y_test, y_prob_rf)
-    auprc_rf = average_precision_score(y_test, y_prob_rf)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred_rf).ravel()
-    sensitivity_rf = tp / (tp + fn) if (tp + fn) > 0 else 0
-    specificity_rf = tn / (tn + fp) if (tn + fp) > 0 else 0
-    precision_rf = tp / (tp + fp) if (tp + fp) > 0 else 0
-    f1_rf = 2 * precision_rf * sensitivity_rf / (precision_rf + sensitivity_rf) if (precision_rf + sensitivity_rf) > 0 else 0
-    brier_rf = brier_score_loss(y_test, y_prob_rf)
-
-    print(f"AUROC: {auroc_rf:.4f}")
-    print(f"AUPRC: {auprc_rf:.4f}")
-    print(f"Optimal Threshold: {opt_threshold_rf:.4f}")
-    print(f"Sensitivity (Recall): {sensitivity_rf:.4f}")
-    print(f"Specificity: {specificity_rf:.4f}")
-    print(f"Precision: {precision_rf:.4f}")
-    print(f"F1 Score: {f1_rf:.4f}")
-    print(f"Brier Score: {brier_rf:.4f}")
-
-    # Save model
-    rf_path = os.path.join(output_dir, 'random_forest.pkl')
-    with open(rf_path, 'wb') as f:
-        pickle.dump(rf_cal, f)
-    print(f"✅ Saved model to {rf_path}")
-
-    results['random_forest'] = {
-        'auroc': auroc_rf,
-        'auprc': auprc_rf,
-        'sensitivity': sensitivity_rf,
-        'specificity': specificity_rf,
-        'precision': precision_rf,
-        'f1': f1_rf,
-        'brier': brier_rf,
-        'optimal_threshold': float(opt_threshold_rf)
-    }
-
-    # 3/3. XGBoost or HistGradientBoosting (with light hyperparameter tuning)
-    print("\n" + "="*60)
-    if XGBOOST_AVAILABLE:
-        print("Training XGBoost")
-    else:
-        print("Training HistGradientBoosting (XGBoost fallback)")
-    print("="*60)
-
-    if XGBOOST_AVAILABLE:
-        # Compute scale_pos_weight from original train-sub prevalence
-        num_pos = float(y_tr_sub.sum())
-        num_neg = float((y_tr_sub == 0).sum())
-        spw = num_neg / max(num_pos, 1.0)
-        xgb_base = xgb.XGBClassifier(
-            n_estimators=300,
-            learning_rate=0.05,
-            max_depth=6,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            eval_metric='aucpr',
-            scale_pos_weight=spw,
-            random_state=42,
-            n_jobs=-1,
-            verbosity=1
+            solver='liblinear'
         )
         try:
-            xgb_param_dist = {
-                'n_estimators': [300, 500, 800],
-                'learning_rate': [0.01, 0.05, 0.1],
-                'max_depth': [4, 6, 8],
-                'subsample': [0.7, 0.8, 0.9],
-                'colsample_bytree': [0.7, 0.8, 0.9]
+            lr_param_dist = {
+                'C': np.logspace(-3, 2, 20)
             }
-            xgb_search = RandomizedSearchCV(
-                xgb_base,
-                param_distributions=xgb_param_dist,
-                n_iter=15,
-                scoring='roc_auc',
-                cv=3,
-                n_jobs=-1,
-                random_state=42,
-                verbose=2
-            )
-            print(f"🔍 XGB hyperparameter search: {xgb_search.n_iter} candidates × {xgb_search.cv} folds = {xgb_search.n_iter * xgb_search.cv} fits")
-            t0 = time.time()
-            xgb_search.fit(X_tr_sub, y_tr_sub)
-            print(f"⏱️ XGB search completed in {time.time() - t0:.1f}s")
-            xgb_best = xgb_search.best_estimator_
-            print(f"✅ XGB best params: {xgb_search.best_params_}")
-        except Exception as e:
-            print(f"⚠️ XGB tuning failed ({e}), using defaults")
-            xgb_best = xgb_base
-    else:
-        hgb_base = HistGradientBoostingClassifier(
-            max_iter=300,
-            learning_rate=0.05,
-            max_depth=6,
-            random_state=42
-        )
-        try:
-            hgb_param_dist = {
-                'max_iter': [200, 300, 400],
-                'learning_rate': [0.01, 0.05, 0.1],
-                'max_depth': [4, 6, 8]
-            }
-            hgb_search = RandomizedSearchCV(
-                hgb_base,
-                param_distributions=hgb_param_dist,
+            lr_search = RandomizedSearchCV(
+                lr_base,
+                param_distributions=lr_param_dist,
                 n_iter=10,
                 scoring='roc_auc',
                 cv=3,
@@ -604,75 +400,311 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
                 random_state=42,
                 verbose=2
             )
-            print(f"🔍 HGB hyperparameter search: {hgb_search.n_iter} candidates × {hgb_search.cv} folds = {hgb_search.n_iter * hgb_search.cv} fits")
+            print(f"🔍 LR hyperparameter search: {lr_search.n_iter} candidates × {lr_search.cv} folds = {lr_search.n_iter * lr_search.cv} fits")
             t0 = time.time()
-            hgb_search.fit(X_train_bal, y_train_bal)
-            print(f"⏱️ HGB search completed in {time.time() - t0:.1f}s")
-            xgb_best = hgb_search.best_estimator_
-            print(f"✅ HGB best params: {hgb_search.best_params_}")
+            lr_search.fit(X_tr_bal, y_tr_bal)
+            print(f"⏱️ LR search completed in {time.time() - t0:.1f}s")
+            lr_best = lr_search.best_estimator_
+            print(f"✅ LR best params: {lr_search.best_params_}")
         except Exception as e:
-            print(f"⚠️ HGB tuning failed ({e}), using defaults")
-            xgb_best = hgb_base
+            print(f"⚠️ LR tuning failed ({e}), using defaults")
+            lr_best = lr_base
+        
+        print("📏 Calibrating LR on validation (isotonic, prefit)...")
+        t0 = time.time()
+        # Fit LR on (possibly SMOTE) train-sub
+        lr_best.fit(X_tr_bal, y_tr_bal)
+        # Calibrate on true-prevalence validation set
+        lr_cal = CalibratedClassifierCV(lr_best, cv='prefit', method='isotonic')
+        lr_cal.fit(X_val_sub, y_val_sub)
+        print(f"⏱️ LR calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
+        
+        y_prob_lr = lr_cal.predict_proba(X_test_fs)[:, 1]
+        
+        # Find optimal threshold (F1-based)
+        opt_threshold_lr, _ = find_optimal_threshold(y_test, y_prob_lr, method='f1')
+        y_pred_lr = (y_prob_lr >= opt_threshold_lr).astype(int)
+        
+        # Metrics
+        auroc_lr = roc_auc_score(y_test, y_prob_lr)
+        auprc_lr = average_precision_score(y_test, y_prob_lr)
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred_lr).ravel()
+        sensitivity_lr = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity_lr = tn / (tn + fp) if (tn + fp) > 0 else 0
+        precision_lr = tp / (tp + fp) if (tp + fp) > 0 else 0
+        f1_lr = 2 * precision_lr * sensitivity_lr / (precision_lr + sensitivity_lr) if (precision_lr + sensitivity_lr) > 0 else 0
+        brier_lr = brier_score_loss(y_test, y_prob_lr)
+        
+        print(f"AUROC: {auroc_lr:.4f}")
+        print(f"AUPRC: {auprc_lr:.4f}")
+        print(f"Optimal Threshold: {opt_threshold_lr:.4f}")
+        print(f"Sensitivity (Recall): {sensitivity_lr:.4f}")
+        print(f"Specificity: {specificity_lr:.4f}")
+        print(f"Precision: {precision_lr:.4f}")
+        print(f"F1 Score: {f1_lr:.4f}")
+        print(f"Brier Score: {brier_lr:.4f}")
+        
+        # Save model
+        lr_path = os.path.join(output_dir, 'logistic_regression.pkl')
+        with open(lr_path, 'wb') as f:
+            pickle.dump(lr_cal, f)
+        print(f"✅ Saved model to {lr_path}")
+        
+        results['logistic_regression'] = {
+            'auroc': auroc_lr,
+            'auprc': auprc_lr,
+            'sensitivity': sensitivity_lr,
+            'specificity': specificity_lr,
+            'precision': precision_lr,
+            'f1': f1_lr,
+            'brier': brier_lr,
+            'optimal_threshold': float(opt_threshold_lr)
+        }
 
-    print("📏 Calibrating XGB/HGB (isotonic, cv=5)...")
-    t0 = time.time()
-    # Refit best XGB with early stopping on validation (true prevalence)
-    try:
-        xgb_best.set_params(eval_metric='aucpr')
-    except Exception:
-        pass
-    xgb_best.fit(
-        X_tr_sub, y_tr_sub,
-        eval_set=[(X_val_sub, y_val_sub)],
-        early_stopping_rounds=50,
-        verbose=False
-    )
-    # Calibrate on validation set (prefit)
-    xgb_cal = CalibratedClassifierCV(xgb_best, cv='prefit', method='isotonic')
-    xgb_cal.fit(X_val_sub, y_val_sub)
-    print(f"⏱️ XGB/HGB calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
+    # 2/3. Random Forest (with light hyperparameter tuning)
+    if train_rf:
+        print("\n" + "="*60)
+        print("Training Random Forest")
+        print("="*60)
+        
+        rf_base = RandomForestClassifier(
+            class_weight='balanced_subsample',
+            random_state=42,
+            n_jobs=-1,
+            verbose=1
+        )
+        try:
+            rf_param_dist = {
+                'n_estimators': [200, 300, 500],
+                'max_depth': [10, 15, 20, None],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4]
+            }
+            rf_search = RandomizedSearchCV(
+                rf_base,
+                param_distributions=rf_param_dist,
+                n_iter=12,
+                scoring='roc_auc',
+                cv=3,
+                n_jobs=-1,
+                random_state=42,
+                verbose=2
+            )
+            total_fits = rf_search.n_iter * rf_search.cv
+            print(f"🔍 RF hyperparameter search: {rf_search.n_iter} candidates × {rf_search.cv} folds = {total_fits} fits")
+            print("⏳ This step can take several minutes depending on CPU cores.")
+            t0 = time.time()
+            rf_search.fit(X_tr_sub, y_tr_sub)
+            print(f"⏱️ RF search completed in {time.time() - t0:.1f}s")
+            rf_best = rf_search.best_estimator_
+            print(f"✅ RF best params: {rf_search.best_params_}")
+        except Exception as e:
+            print(f"⚠️ RF tuning failed ({e}), using defaults")
+            rf_best = rf_base
+        
+        print("📏 Calibrating RF (isotonic, cv=5)...")
+        t0 = time.time()
+        # Fit RF on original (no SMOTE) train-sub
+        rf_best.fit(X_tr_sub, y_tr_sub)
+        # Calibrate on true-prevalence validation set
+        rf_cal = CalibratedClassifierCV(rf_best, cv='prefit', method='isotonic')
+        rf_cal.fit(X_val_sub, y_val_sub)
+        print(f"⏱️ RF calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
+        
+        y_prob_rf = rf_cal.predict_proba(X_test_fs)[:, 1]
+        
+        # Find optimal threshold (F1-based)
+        opt_threshold_rf, _ = find_optimal_threshold(y_test, y_prob_rf, method='f1')
+        y_pred_rf = (y_prob_rf >= opt_threshold_rf).astype(int)
+        
+        # Metrics
+        auroc_rf = roc_auc_score(y_test, y_prob_rf)
+        auprc_rf = average_precision_score(y_test, y_prob_rf)
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred_rf).ravel()
+        sensitivity_rf = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity_rf = tn / (tn + fp) if (tn + fp) > 0 else 0
+        precision_rf = tp / (tp + fp) if (tp + fp) > 0 else 0
+        f1_rf = 2 * precision_rf * sensitivity_rf / (precision_rf + sensitivity_rf) if (precision_rf + sensitivity_rf) > 0 else 0
+        brier_rf = brier_score_loss(y_test, y_prob_rf)
+        
+        print(f"AUROC: {auroc_rf:.4f}")
+        print(f"AUPRC: {auprc_rf:.4f}")
+        print(f"Optimal Threshold: {opt_threshold_rf:.4f}")
+        print(f"Sensitivity (Recall): {sensitivity_rf:.4f}")
+        print(f"Specificity: {specificity_rf:.4f}")
+        print(f"Precision: {precision_rf:.4f}")
+        print(f"F1 Score: {f1_rf:.4f}")
+        print(f"Brier Score: {brier_rf:.4f}")
+        
+        # Save model
+        rf_path = os.path.join(output_dir, 'random_forest.pkl')
+        with open(rf_path, 'wb') as f:
+            pickle.dump(rf_cal, f)
+        print(f"✅ Saved model to {rf_path}")
+        
+        results['random_forest'] = {
+            'auroc': auroc_rf,
+            'auprc': auprc_rf,
+            'sensitivity': sensitivity_rf,
+            'specificity': specificity_rf,
+            'precision': precision_rf,
+            'f1': f1_rf,
+            'brier': brier_rf,
+            'optimal_threshold': float(opt_threshold_rf)
+        }
 
-    y_prob_xgb = xgb_cal.predict_proba(X_test_fs)[:, 1]
-
-    # Find optimal threshold (F1-based)
-    opt_threshold_xgb, _ = find_optimal_threshold(y_test, y_prob_xgb, method='f1')
-    y_pred_xgb = (y_prob_xgb >= opt_threshold_xgb).astype(int)
-
-    # Metrics
-    auroc_xgb = roc_auc_score(y_test, y_prob_xgb)
-    auprc_xgb = average_precision_score(y_test, y_prob_xgb)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred_xgb).ravel()
-    sensitivity_xgb = tp / (tp + fn) if (tp + fn) > 0 else 0
-    specificity_xgb = tn / (tn + fp) if (tn + fp) > 0 else 0
-    precision_xgb = tp / (tp + fp) if (tp + fp) > 0 else 0
-    f1_xgb = 2 * precision_xgb * sensitivity_xgb / (precision_xgb + sensitivity_xgb) if (precision_xgb + sensitivity_xgb) > 0 else 0
-    brier_xgb = brier_score_loss(y_test, y_prob_xgb)
-
-    print(f"AUROC: {auroc_xgb:.4f}")
-    print(f"AUPRC: {auprc_xgb:.4f}")
-    print(f"Optimal Threshold: {opt_threshold_xgb:.4f}")
-    print(f"Sensitivity (Recall): {sensitivity_xgb:.4f}")
-    print(f"Specificity: {specificity_xgb:.4f}")
-    print(f"Precision: {precision_xgb:.4f}")
-    print(f"F1 Score: {f1_xgb:.4f}")
-    print(f"Brier Score: {brier_xgb:.4f}")
-
-    # Save model
-    xgb_path = os.path.join(output_dir, 'xgboost.pkl')
-    with open(xgb_path, 'wb') as f:
-        pickle.dump(xgb_cal, f)
-    print(f"✅ Saved model to {xgb_path}")
-
-    results['xgboost'] = {
-        'auroc': auroc_xgb,
-        'auprc': auprc_xgb,
-        'sensitivity': sensitivity_xgb,
-        'specificity': specificity_xgb,
-        'precision': precision_xgb,
-        'f1': f1_xgb,
-        'brier': brier_xgb,
-        'optimal_threshold': float(opt_threshold_xgb)
-    }
+    # 3/3. XGBoost or HistGradientBoosting (with light hyperparameter tuning)
+    if train_xgb:
+        print("\n" + "="*60)
+        if XGBOOST_AVAILABLE:
+            print("Training XGBoost")
+        else:
+            print("Training HistGradientBoosting (XGBoost fallback)")
+        print("="*60)
+        
+        if XGBOOST_AVAILABLE:
+            # Compute scale_pos_weight from original train-sub prevalence
+            num_pos = float(y_tr_sub.sum())
+            num_neg = float((y_tr_sub == 0).sum())
+            spw = num_neg / max(num_pos, 1.0)
+            xgb_base = xgb.XGBClassifier(
+                n_estimators=300,
+                learning_rate=0.05,
+                max_depth=6,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                eval_metric='aucpr',
+                scale_pos_weight=spw,
+                random_state=42,
+                n_jobs=-1,
+                verbosity=1
+            )
+            try:
+                xgb_param_dist = {
+                    'n_estimators': [300, 500, 800],
+                    'learning_rate': [0.01, 0.05, 0.1],
+                    'max_depth': [4, 6, 8],
+                    'subsample': [0.7, 0.8, 0.9],
+                    'colsample_bytree': [0.7, 0.8, 0.9]
+                }
+                xgb_search = RandomizedSearchCV(
+                    xgb_base,
+                    param_distributions=xgb_param_dist,
+                    n_iter=15,
+                    scoring='roc_auc',
+                    cv=3,
+                    n_jobs=-1,
+                    random_state=42,
+                    verbose=2
+                )
+                print(f"🔍 XGB hyperparameter search: {xgb_search.n_iter} candidates × {xgb_search.cv} folds = {xgb_search.n_iter * xgb_search.cv} fits")
+                t0 = time.time()
+                xgb_search.fit(X_tr_sub, y_tr_sub)
+                print(f"⏱️ XGB search completed in {time.time() - t0:.1f}s")
+                xgb_best = xgb_search.best_estimator_
+                print(f"✅ XGB best params: {xgb_search.best_params_}")
+            except Exception as e:
+                print(f"⚠️ XGB tuning failed ({e}), using defaults")
+                xgb_best = xgb_base
+        else:
+            hgb_base = HistGradientBoostingClassifier(
+                max_iter=300,
+                learning_rate=0.05,
+                max_depth=6,
+                random_state=42
+            )
+            try:
+                hgb_param_dist = {
+                    'max_iter': [200, 300, 400],
+                    'learning_rate': [0.01, 0.05, 0.1],
+                    'max_depth': [4, 6, 8]
+                }
+                hgb_search = RandomizedSearchCV(
+                    hgb_base,
+                    param_distributions=hgb_param_dist,
+                    n_iter=10,
+                    scoring='roc_auc',
+                    cv=3,
+                    n_jobs=-1,
+                    random_state=42,
+                    verbose=2
+                )
+                print(f"🔍 HGB hyperparameter search: {hgb_search.n_iter} candidates × {hgb_search.cv} folds = {hgb_search.n_iter * hgb_search.cv} fits")
+                t0 = time.time()
+                hgb_search.fit(X_tr_sub, y_tr_sub)
+                print(f"⏱️ HGB search completed in {time.time() - t0:.1f}s")
+                xgb_best = hgb_search.best_estimator_
+                print(f"✅ HGB best params: {hgb_search.best_params_}")
+            except Exception as e:
+                print(f"⚠️ HGB tuning failed ({e}), using defaults")
+                xgb_best = hgb_base
+        
+        print("📏 Calibrating XGB/HGB (isotonic, cv=5)...")
+        t0 = time.time()
+        # Refit best XGB with early stopping on validation (true prevalence)
+        try:
+            xgb_best.set_params(eval_metric='aucpr')
+        except Exception:
+            pass
+        # Use callback-based early stopping for broad version compatibility
+        try:
+            es_cb = [xgb.callback.EarlyStopping(
+                rounds=50, save_best=True, maximize=True, data_name='validation_0', metric_name='aucpr'
+            )]
+        except Exception:
+            es_cb = None
+        xgb_best.fit(
+            X_tr_sub, y_tr_sub,
+            eval_set=[(X_val_sub, y_val_sub)],
+            verbose=False,
+            callbacks=es_cb
+        )
+        # Calibrate on validation set (prefit)
+        xgb_cal = CalibratedClassifierCV(xgb_best, cv='prefit', method='isotonic')
+        xgb_cal.fit(X_val_sub, y_val_sub)
+        print(f"⏱️ XGB/HGB calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
+        
+        y_prob_xgb = xgb_cal.predict_proba(X_test_fs)[:, 1]
+        
+        # Find optimal threshold (F1-based)
+        opt_threshold_xgb, _ = find_optimal_threshold(y_test, y_prob_xgb, method='f1')
+        y_pred_xgb = (y_prob_xgb >= opt_threshold_xgb).astype(int)
+        
+        # Metrics
+        auroc_xgb = roc_auc_score(y_test, y_prob_xgb)
+        auprc_xgb = average_precision_score(y_test, y_prob_xgb)
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred_xgb).ravel()
+        sensitivity_xgb = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity_xgb = tn / (tn + fp) if (tn + fp) > 0 else 0
+        precision_xgb = tp / (tp + fp) if (tp + fp) > 0 else 0
+        f1_xgb = 2 * precision_xgb * sensitivity_xgb / (precision_xgb + sensitivity_xgb) if (precision_xgb + sensitivity_xgb) > 0 else 0
+        brier_xgb = brier_score_loss(y_test, y_prob_xgb)
+        
+        print(f"AUROC: {auroc_xgb:.4f}")
+        print(f"AUPRC: {auprc_xgb:.4f}")
+        print(f"Optimal Threshold: {opt_threshold_xgb:.4f}")
+        print(f"Sensitivity (Recall): {sensitivity_xgb:.4f}")
+        print(f"Specificity: {specificity_xgb:.4f}")
+        print(f"Precision: {precision_xgb:.4f}")
+        print(f"F1 Score: {f1_xgb:.4f}")
+        print(f"Brier Score: {brier_xgb:.4f}")
+        
+        # Save model
+        xgb_path = os.path.join(output_dir, 'xgboost.pkl')
+        with open(xgb_path, 'wb') as f:
+            pickle.dump(xgb_cal, f)
+        print(f"✅ Saved model to {xgb_path}")
+        
+        results['xgboost'] = {
+            'auroc': auroc_xgb,
+            'auprc': auprc_xgb,
+            'sensitivity': sensitivity_xgb,
+            'specificity': specificity_xgb,
+            'precision': precision_xgb,
+            'f1': f1_xgb,
+            'brier': brier_xgb,
+            'optimal_threshold': float(opt_threshold_xgb)
+        }
 
     return results
 
