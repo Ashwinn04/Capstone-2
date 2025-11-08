@@ -434,9 +434,11 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         precision_lr = tp / (tp + fp) if (tp + fp) > 0 else 0
         f1_lr = 2 * precision_lr * sensitivity_lr / (precision_lr + sensitivity_lr) if (precision_lr + sensitivity_lr) > 0 else 0
         brier_lr = brier_score_loss(y_test, y_prob_lr)
+        accuracy_lr = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
         
         print(f"AUROC: {auroc_lr:.4f}")
         print(f"AUPRC: {auprc_lr:.4f}")
+        print(f"Accuracy: {accuracy_lr:.4f}")
         print(f"Optimal Threshold: {opt_threshold_lr:.4f}")
         print(f"Sensitivity (Recall): {sensitivity_lr:.4f}")
         print(f"Specificity: {specificity_lr:.4f}")
@@ -453,6 +455,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         results['logistic_regression'] = {
             'auroc': auroc_lr,
             'auprc': auprc_lr,
+            'accuracy': accuracy_lr,
             'sensitivity': sensitivity_lr,
             'specificity': specificity_lr,
             'precision': precision_lr,
@@ -526,9 +529,11 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         precision_rf = tp / (tp + fp) if (tp + fp) > 0 else 0
         f1_rf = 2 * precision_rf * sensitivity_rf / (precision_rf + sensitivity_rf) if (precision_rf + sensitivity_rf) > 0 else 0
         brier_rf = brier_score_loss(y_test, y_prob_rf)
+        accuracy_rf = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
         
         print(f"AUROC: {auroc_rf:.4f}")
         print(f"AUPRC: {auprc_rf:.4f}")
+        print(f"Accuracy: {accuracy_rf:.4f}")
         print(f"Optimal Threshold: {opt_threshold_rf:.4f}")
         print(f"Sensitivity (Recall): {sensitivity_rf:.4f}")
         print(f"Specificity: {specificity_rf:.4f}")
@@ -545,6 +550,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         results['random_forest'] = {
             'auroc': auroc_rf,
             'auprc': auprc_rf,
+            'accuracy': accuracy_rf,
             'sensitivity': sensitivity_rf,
             'specificity': specificity_rf,
             'precision': precision_rf,
@@ -679,9 +685,11 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         precision_xgb = tp / (tp + fp) if (tp + fp) > 0 else 0
         f1_xgb = 2 * precision_xgb * sensitivity_xgb / (precision_xgb + sensitivity_xgb) if (precision_xgb + sensitivity_xgb) > 0 else 0
         brier_xgb = brier_score_loss(y_test, y_prob_xgb)
+        accuracy_xgb = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
         
         print(f"AUROC: {auroc_xgb:.4f}")
         print(f"AUPRC: {auprc_xgb:.4f}")
+        print(f"Accuracy: {accuracy_xgb:.4f}")
         print(f"Optimal Threshold: {opt_threshold_xgb:.4f}")
         print(f"Sensitivity (Recall): {sensitivity_xgb:.4f}")
         print(f"Specificity: {specificity_xgb:.4f}")
@@ -698,6 +706,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         results['xgboost'] = {
             'auroc': auroc_xgb,
             'auprc': auprc_xgb,
+            'accuracy': accuracy_xgb,
             'sensitivity': sensitivity_xgb,
             'specificity': specificity_xgb,
             'precision': precision_xgb,

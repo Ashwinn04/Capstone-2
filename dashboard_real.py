@@ -1033,8 +1033,11 @@ def _load_baseline_metrics():
                 
                 for key, metrics in baseline_data.items():
                     model_name = model_name_map.get(key, key.replace('_', ' ').title())
+                    # Ensure accuracy is included and formatted properly
+                    accuracy = metrics.get('accuracy', None)
                     rows.append({
                         'Model': model_name,
+                        'Accuracy': float(accuracy) if accuracy is not None else None,
                         'AUROC': metrics.get('auroc', None),
                         'AUPRC': metrics.get('auprc', None),
                         'Sensitivity': metrics.get('sensitivity', None),
@@ -1079,6 +1082,7 @@ def show_performance_metrics():
                 df_raw = df_raw.rename(columns={'Unnamed: 0': 'Model'})
             # Normalize column names
             rename_map = {
+                'model': 'Model',  # Handle lowercase 'model' column
                 'auroc': 'AUROC', 'auprc': 'AUPRC', 'accuracy': 'Accuracy',
                 'precision': 'Precision', 'recall': 'Recall', 'specificity': 'Specificity',
                 'f1_score': 'F1-Score', 'sensitivity_at_80_specificity': 'Sensitivity@80%Spec',
@@ -1092,8 +1096,11 @@ def show_performance_metrics():
             # Ensure Model column
             if 'Model' not in df_raw.columns:
                 df_raw.insert(0, 'Model', df_raw.index)
-            # Select key columns if present
-            cols_pref = ['Model', 'AUROC', 'AUPRC', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1-Score', 'Sensitivity@80%Spec',
+            # Filter out Transformer model
+            if 'Model' in df_raw.columns:
+                df_raw = df_raw[~df_raw['Model'].str.lower().isin(['transformer', '0'])].copy()
+            # Select key columns if present - put Accuracy first for prominence
+            cols_pref = ['Model', 'Accuracy', 'AUROC', 'AUPRC', 'Precision', 'Recall', 'Specificity', 'F1-Score', 'Sensitivity@80%Spec',
                          'Accuracy@R85', 'Precision@R85', 'Recall@R85', 'Specificity@R85', 'F1-Score@R85', 'Threshold@R85']
             present_cols = [c for c in cols_pref if c in df_raw.columns]
             df_dl_metrics = df_raw[present_cols].copy()
@@ -1107,6 +1114,15 @@ def show_performance_metrics():
                         df_dl_metrics[col] = None
                     if col not in df_baseline.columns:
                         df_baseline[col] = None
+                
+                # Reorder columns to put Accuracy first (if present)
+                priority_cols = ['Model', 'Accuracy', 'AUROC', 'AUPRC']
+                remaining_cols = [c for c in all_cols if c not in priority_cols]
+                col_order = [c for c in priority_cols if c in all_cols] + sorted(remaining_cols)
+                
+                # Reorder both dataframes before combining
+                df_baseline = df_baseline[[c for c in col_order if c in df_baseline.columns]]
+                df_dl_metrics = df_dl_metrics[[c for c in col_order if c in df_dl_metrics.columns]]
                 
                 # Combine dataframes
                 df_metrics = pd.concat([df_baseline, df_dl_metrics], ignore_index=True)
@@ -1124,15 +1140,68 @@ def show_performance_metrics():
                     pass
             st.dataframe(df_metrics, width='stretch')
             
-            # Accuracy bar chart if available
+            # Model Accuracy Comparison Graph
             if 'Accuracy' in df_metrics.columns:
-                fig_acc = px.bar(
-                    df_metrics, x='Model', y='Accuracy',
-                    title='Accuracy by Model', color='Accuracy',
-                    color_continuous_scale='Blues'
+                st.subheader("🎯 Model Accuracy Comparison")
+                fig_acc = go.Figure()
+                
+                acc_values = df_metrics['Accuracy'].fillna(0).values
+                models = df_metrics['Model'].values
+                
+                # Color based on accuracy level
+                colors_acc = ['#d62728' if v < 0.7 else '#ff7f0e' if v < 0.85 else '#2ca02c' for v in acc_values]
+                
+                fig_acc.add_trace(go.Bar(
+                    x=models,
+                    y=acc_values,
+                    marker_color=colors_acc,
+                    text=[f'{v:.1%}' if not pd.isna(v) else 'N/A' for v in acc_values],
+                    textposition='auto',
+                    hovertemplate='<b>%{x}</b><br>Accuracy: %{y:.3f} (%{text})<extra></extra>',
+                    name='Accuracy'
+                ))
+                
+                # Add threshold lines
+                fig_acc.add_hline(y=0.85, line_dash="dash", line_color="green", 
+                                  annotation_text="Excellent (85%)", annotation_position="right")
+                fig_acc.add_hline(y=0.70, line_dash="dash", line_color="orange", 
+                                  annotation_text="Good (70%)", annotation_position="right")
+                
+                fig_acc.update_layout(
+                    title='Model Accuracy Comparison',
+                    xaxis_title='Model',
+                    yaxis_title='Accuracy',
+                    yaxis=dict(range=[0, 1], tickformat='.0%'),
+                    height=450,
+                    xaxis=dict(tickangle=-45),
+                    showlegend=False
                 )
-                fig_acc.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig_acc, width='stretch')
+                st.plotly_chart(fig_acc, use_container_width=True)
+                
+                # Accuracy statistics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    # Filter out NaN values before finding max
+                    acc_valid = df_metrics['Accuracy'].dropna()
+                    if len(acc_valid) > 0:
+                        best_acc_idx = acc_valid.idxmax()
+                        best_acc = df_metrics.loc[best_acc_idx]
+                        model_name = str(best_acc.get('Model', 'Unknown'))
+                        st.metric("Best Accuracy", f"{best_acc['Accuracy']:.1%}", model_name)
+                with col2:
+                    avg_acc = df_metrics['Accuracy'].mean()
+                    st.metric("Average Accuracy", f"{avg_acc:.1%}")
+                with col3:
+                    # Filter out NaN values before finding min
+                    acc_valid = df_metrics['Accuracy'].dropna()
+                    if len(acc_valid) > 0:
+                        min_acc_idx = acc_valid.idxmin()
+                        min_acc = df_metrics.loc[min_acc_idx]
+                        model_name = str(min_acc.get('Model', 'Unknown'))
+                        st.metric("Lowest Accuracy", f"{min_acc['Accuracy']:.1%}", model_name)
+                with col4:
+                    std_acc = df_metrics['Accuracy'].std()
+                    st.metric("Std Deviation", f"{std_acc:.3f}")
             
             # Metrics at Recall=0.85 if present (only for DL models)
             if 'Precision@R85' in df_metrics.columns or 'Specificity@R85' in df_metrics.columns:
@@ -1195,58 +1264,35 @@ def show_performance_metrics():
 
 def _show_metrics_visualizations(df_metrics):
     """Helper function to show visualizations for metrics dataframe"""
-    # AUROC and AUPRC if available
-    col1, col2 = st.columns(2)
-    if 'AUROC' in df_metrics.columns:
-        with col1:
-            fig_auroc = px.bar(
-                df_metrics, x='Model', y='AUROC',
-                title='AUROC Comparison', color='AUROC',
-                color_continuous_scale='Viridis'
-            )
-            fig_auroc.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_auroc, width='stretch')
-    if 'AUPRC' in df_metrics.columns:
-        with col2:
-            fig_auprc = px.bar(
-                df_metrics, x='Model', y='AUPRC',
-                title='AUPRC Comparison', color='AUPRC',
-                color_continuous_scale='Plasma'
-            )
-            fig_auprc.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_auprc, width='stretch')
-    
-    # Summary metrics if present
+    # Only show accuracy summary if available
     available = set(df_metrics.columns)
-    if {'Model', 'AUROC'} <= available:
-        best_auroc = df_metrics.iloc[df_metrics['AUROC'].idxmax()]
-    else:
-        best_auroc = None
-    if {'Model', 'AUPRC'} <= available:
-        best_auprc = df_metrics.iloc[df_metrics['AUPRC'].idxmax()]
-    else:
-        best_auprc = None
-    if {'Model', 'F1-Score'} <= available:
-        best_f1 = df_metrics.iloc[df_metrics['F1-Score'].idxmax()]
-    else:
-        best_f1 = None
     
-    st.subheader("Performance Summary")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if best_auroc is not None:
-            st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
-    with col2:
-        if best_auprc is not None:
-            st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
-    with col3:
-        if best_f1 is not None:
-            st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
+    if {'Model', 'Accuracy'} <= available:
+        st.subheader("Accuracy Summary")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Filter out NaN values before finding max
+            acc_valid = df_metrics['Accuracy'].dropna()
+            if len(acc_valid) > 0:
+                best_acc = df_metrics.loc[acc_valid.idxmax()]
+                model_name = str(best_acc.get('Model', 'Unknown'))
+                st.metric("Best Accuracy", f"{best_acc['Accuracy']:.1%}", model_name)
+        with col2:
+            avg_acc = df_metrics['Accuracy'].mean()
+            st.metric("Average Accuracy", f"{avg_acc:.1%}")
+        with col3:
+            # Filter out NaN values before finding min
+            acc_valid = df_metrics['Accuracy'].dropna()
+            if len(acc_valid) > 0:
+                min_acc = df_metrics.loc[acc_valid.idxmin()]
+                model_name = str(min_acc.get('Model', 'Unknown'))
+                st.metric("Lowest Accuracy", f"{min_acc['Accuracy']:.1%}", model_name)
 
 def _show_demo_metrics():
     # Performance data (placeholder)
     metrics_data = {
         'Model': ['Logistic Regression', 'Random Forest', 'XGBoost', 'GRU-D', 'LSTM', 'CNN-LSTM', 'Transformer'],
+        'Accuracy': [0.82, 0.84, 0.86, 0.88, 0.85, 0.87, 0.86],
         'AUROC': [0.85, 0.87, 0.89, 0.91, 0.88, 0.90, 0.89],
         'AUPRC': [0.45, 0.48, 0.52, 0.58, 0.55, 0.60, 0.57],
         'Sensitivity': [0.82, 0.85, 0.87, 0.89, 0.86, 0.88, 0.87],
@@ -1256,26 +1302,64 @@ def _show_demo_metrics():
     df_metrics = pd.DataFrame(metrics_data)
     st.subheader("Model Performance Comparison (demo)")
     st.dataframe(df_metrics, width='stretch')
-    col1, col2 = st.columns(2)
+    
+    # Model Accuracy Comparison Graph
+    st.subheader("🎯 Model Accuracy Comparison")
+    fig_acc = go.Figure()
+    
+    acc_values = df_metrics['Accuracy'].values
+    colors_acc = ['#d62728' if v < 0.7 else '#ff7f0e' if v < 0.85 else '#2ca02c' for v in acc_values]
+    
+    fig_acc.add_trace(go.Bar(
+        x=df_metrics['Model'],
+        y=acc_values,
+        marker_color=colors_acc,
+        text=[f'{v:.1%}' for v in acc_values],
+        textposition='auto',
+        hovertemplate='<b>%{x}</b><br>Accuracy: %{y:.3f} (%{text})<extra></extra>',
+        name='Accuracy'
+    ))
+    
+    fig_acc.add_hline(y=0.85, line_dash="dash", line_color="green", 
+                      annotation_text="Excellent (85%)", annotation_position="right")
+    fig_acc.add_hline(y=0.70, line_dash="dash", line_color="orange", 
+                      annotation_text="Good (70%)", annotation_position="right")
+    
+    fig_acc.update_layout(
+        title='Model Accuracy Comparison',
+        xaxis_title='Model',
+        yaxis_title='Accuracy',
+        yaxis=dict(range=[0, 1], tickformat='.0%'),
+        height=450,
+        xaxis=dict(tickangle=-45),
+        showlegend=False
+    )
+    st.plotly_chart(fig_acc, use_container_width=True)
+    
+    # Accuracy statistics
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        fig_auroc = px.bar(df_metrics, x='Model', y='AUROC', title='AUROC Comparison', color='AUROC', color_continuous_scale='Viridis')
-        fig_auroc.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_auroc, width='stretch')
+        # Filter out NaN values before finding max
+        acc_valid = df_metrics['Accuracy'].dropna()
+        if len(acc_valid) > 0:
+            best_acc_idx = acc_valid.idxmax()
+            best_acc = df_metrics.loc[best_acc_idx]
+            model_name = str(best_acc.get('Model', 'Unknown'))
+            st.metric("Best Accuracy", f"{best_acc['Accuracy']:.1%}", model_name)
     with col2:
-        fig_auprc = px.bar(df_metrics, x='Model', y='AUPRC', title='AUPRC Comparison', color='AUPRC', color_continuous_scale='Plasma')
-        fig_auprc.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_auprc, width='stretch')
-    st.subheader("Performance Summary")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        best_auroc = df_metrics.loc[df_metrics['AUROC'].idxmax()]
-        st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
-    with col2:
-        best_auprc = df_metrics.loc[df_metrics['AUPRC'].idxmax()]
-        st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
+        avg_acc = df_metrics['Accuracy'].mean()
+        st.metric("Average Accuracy", f"{avg_acc:.1%}")
     with col3:
-        best_f1 = df_metrics.loc[df_metrics['F1-Score'].idxmax()]
-        st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
+        # Filter out NaN values before finding min
+        acc_valid = df_metrics['Accuracy'].dropna()
+        if len(acc_valid) > 0:
+            min_acc_idx = acc_valid.idxmin()
+            min_acc = df_metrics.loc[min_acc_idx]
+            model_name = str(min_acc.get('Model', 'Unknown'))
+            st.metric("Lowest Accuracy", f"{min_acc['Accuracy']:.1%}", model_name)
+    with col4:
+        std_acc = df_metrics['Accuracy'].std()
+        st.metric("Std Deviation", f"{std_acc:.3f}")
     
     # Clinical interpretation
     st.subheader("Clinical Interpretation")
@@ -1292,7 +1376,7 @@ def _show_demo_metrics():
     # Model recommendations
     st.subheader("Model Recommendations")
     
-    deep_learning_models = df_metrics[df_metrics['Model'].isin(['GRU-D', 'LSTM', 'CNN-LSTM', 'Transformer'])]
+    deep_learning_models = df_metrics[df_metrics['Model'].isin(['GRU-D', 'LSTM', 'CNN-LSTM'])]
     baseline_models = df_metrics[df_metrics['Model'].isin(['Logistic Regression', 'Random Forest', 'XGBoost'])]
     
     col1, col2 = st.columns(2)
@@ -2399,7 +2483,7 @@ def main():
         export_performance_data()
     
     # Main dashboard tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "📊 Risk Overview", 
         "🤖 Model Predictions", 
         "📊 Model Curves",
@@ -2408,7 +2492,8 @@ def main():
         "🧠 Dynamic Explainability",
         "👤 Patient Data",
         "🏥 Clinical Workflow",
-        "⚖️ Fairness Analysis"
+        "⚖️ Fairness Analysis",
+        "📊 Performance Metrics"
     ])
     
     with tab1:
@@ -2437,6 +2522,9 @@ def main():
     
     with tab9:
         show_fairness_analysis()
+    
+    with tab10:
+        show_performance_metrics()
     
     # Footer removed per request
 
