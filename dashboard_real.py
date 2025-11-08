@@ -15,7 +15,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Add project root to path
-project_root = '/Users/ashwinnair/Downloads/Capstone 2'
+from pathlib import Path
+project_root = str(Path(__file__).resolve().parent)
 sys.path.append(project_root)
 from integration_real import get_integration_system
 
@@ -712,7 +713,7 @@ def show_model_predictions(risk_data):
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Model details with confidence intervals
     st.subheader("Detailed Model Results")
@@ -773,7 +774,7 @@ def show_model_predictions(risk_data):
         height=400
     )
     
-    st.plotly_chart(fig_uncertainty, use_container_width=True)
+    st.plotly_chart(fig_uncertainty, width='stretch')
 
 def show_risk_trajectory(risk_data):
     """Display risk trajectory over time"""
@@ -809,7 +810,7 @@ def show_risk_trajectory(risk_data):
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Risk trend analysis
     st.subheader("Risk Trend Analysis")
@@ -851,7 +852,7 @@ def show_explainability(risk_data):
         color_continuous_scale='Reds'
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Feature details
     st.subheader("Feature Details")
@@ -912,7 +913,7 @@ def show_dynamic_explainability(patient_data):
         labels={'x': 'Hour', 'y': 'Feature', 'color': 'Impact Score'}
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Top feature changes
     st.subheader("📈 Top Feature Changes")
@@ -1131,7 +1132,7 @@ def show_performance_metrics():
                     color_continuous_scale='Blues'
                 )
                 fig_acc.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig_acc, use_container_width=True)
+                st.plotly_chart(fig_acc, width='stretch')
             
             # Metrics at Recall=0.85 if present (only for DL models)
             if 'Precision@R85' in df_metrics.columns or 'Specificity@R85' in df_metrics.columns:
@@ -1145,7 +1146,7 @@ def show_performance_metrics():
                             color_continuous_scale='Blues'
                         )
                         fig_p_r85.update_layout(xaxis_tickangle=-45)
-                        st.plotly_chart(fig_p_r85, use_container_width=True)
+                        st.plotly_chart(fig_p_r85, width='stretch')
                 if 'Specificity@R85' in df_metrics.columns:
                     with c2:
                         fig_s_r85 = px.bar(
@@ -1154,7 +1155,7 @@ def show_performance_metrics():
                             color_continuous_scale='Greens'
                         )
                         fig_s_r85.update_layout(xaxis_tickangle=-45)
-                        st.plotly_chart(fig_s_r85, use_container_width=True)
+                        st.plotly_chart(fig_s_r85, width='stretch')
             
             # Show visualizations (includes summary metrics)
             _show_metrics_visualizations(df_metrics)
@@ -1204,7 +1205,7 @@ def _show_metrics_visualizations(df_metrics):
                 color_continuous_scale='Viridis'
             )
             fig_auroc.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_auroc, use_container_width=True)
+            st.plotly_chart(fig_auroc, width='stretch')
     if 'AUPRC' in df_metrics.columns:
         with col2:
             fig_auprc = px.bar(
@@ -1213,7 +1214,7 @@ def _show_metrics_visualizations(df_metrics):
                 color_continuous_scale='Plasma'
             )
             fig_auprc.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_auprc, use_container_width=True)
+            st.plotly_chart(fig_auprc, width='stretch')
     
     # Summary metrics if present
     available = set(df_metrics.columns)
@@ -1254,16 +1255,16 @@ def _show_demo_metrics():
     }
     df_metrics = pd.DataFrame(metrics_data)
     st.subheader("Model Performance Comparison (demo)")
-    st.dataframe(df_metrics, use_container_width=True)
+    st.dataframe(df_metrics, width='stretch')
     col1, col2 = st.columns(2)
     with col1:
         fig_auroc = px.bar(df_metrics, x='Model', y='AUROC', title='AUROC Comparison', color='AUROC', color_continuous_scale='Viridis')
         fig_auroc.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_auroc, use_container_width=True)
+        st.plotly_chart(fig_auroc, width='stretch')
     with col2:
         fig_auprc = px.bar(df_metrics, x='Model', y='AUPRC', title='AUPRC Comparison', color='AUPRC', color_continuous_scale='Plasma')
         fig_auprc.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_auprc, use_container_width=True)
+        st.plotly_chart(fig_auprc, width='stretch')
     st.subheader("Performance Summary")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1327,7 +1328,7 @@ def _show_demo_metrics():
     fig_lead_time.add_vline(x=4.5, line_dash="dash", line_color="red", 
                           annotation_text="Mean: 4.5 hours")
     
-    st.plotly_chart(fig_lead_time, use_container_width=True)
+    st.plotly_chart(fig_lead_time, width='stretch')
     
     # Lead-time statistics
     col1, col2, col3 = st.columns(3)
@@ -1390,7 +1391,7 @@ def _show_demo_metrics():
         height=600
     )
     
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_radar, width='stretch')
     
     # Radar chart interpretation
     st.info("""
@@ -1402,6 +1403,103 @@ def _show_demo_metrics():
     - **Calibration**: Prediction reliability
     - **Timeliness**: Early detection capability
     """)
+
+def _first_existing_path(candidates):
+    """Return first existing path among candidate relative paths (checked under project_root and as-is)."""
+    for rel in candidates:
+        abs_path = os.path.join(project_root, rel)
+        if os.path.exists(abs_path):
+            return abs_path
+        if os.path.exists(rel):
+            return rel
+    return None
+
+def show_model_curves():
+    """Display ROC, PR, and calibration curves for all models if available."""
+    st.header("📊 Model Curves")
+    
+    # Combined ROC and PR curves
+    roc_candidates = [
+        'outputs/figures/roc_curves_comparison.png',
+        'Capstone/outputs/figures/roc_curves_comparison.png',
+        'ROC CURVES COMPARISON.png'
+    ]
+    pr_candidates = [
+        'outputs/figures/pr_curves_comparison.png',
+        'Capstone/outputs/figures/pr_curves_comparison.png',
+        'PRECISION-RECALL CURVES.png'
+    ]
+    roc_path = _first_existing_path(roc_candidates)
+    pr_path = _first_existing_path(pr_candidates)
+    col_roc, col_pr = st.columns(2)
+    with col_roc:
+        if roc_path:
+            st.subheader("ROC Curves (All Models)")
+            st.image(roc_path, use_column_width=True)
+        else:
+            st.info("ROC curves image not found.")
+    with col_pr:
+        if pr_path:
+            st.subheader("Precision-Recall Curves (All Models)")
+            st.image(pr_path, use_column_width=True)
+        else:
+            st.info("PR curves image not found.")
+    
+    st.subheader("Calibration Curves")
+    # Per-model calibration images (try multiple naming schemes)
+    model_to_candidates = {
+        'GRU-D': [
+            'outputs/figures/gru_d_calibration.png',
+            'Capstone/outputs/figures/gru_d_calibration.png',
+            'GRU-D calibration curve.png'
+        ],
+        'LSTM': [
+            'outputs/figures/lstm_calibration.png',
+            'Capstone/outputs/figures/lstm_calibration.png',
+            'LSTM CALIBRATION CURVE.png'
+        ],
+        'CNN-LSTM': [
+            'outputs/figures/cnn_lstm_calibration.png',
+            'Capstone/outputs/figures/cnn_lstm_calibration.png',
+            'CNN CALIBRATION.png'
+        ],
+        'Transformer': [
+            'outputs/figures/transformer_calibration.png',
+            'Capstone/outputs/figures/transformer_calibration.png',
+            'TRANSFORMER CALIBRATION CURVE.png'
+        ]
+    }
+    cols = st.columns(2)
+    i = 0
+    any_cal = False
+    for model, candidates in model_to_candidates.items():
+        path = _first_existing_path(candidates)
+        with cols[i % 2]:
+            if path:
+                any_cal = True
+                st.caption(model)
+                st.image(path, use_column_width=True)
+        i += 1
+    if not any_cal:
+        st.info("No calibration curve images found.")
+    
+    # Confusion matrices (if available)
+    st.subheader("Confusion Matrices")
+    cm_candidates = [
+        ('GRU-D (Demo)', ['Capstone/outputs/figures/grud_demo_confusion_matrix.png']),
+        ('GRU-D (Real)', ['Capstone/outputs/figures/grud_real_confusion_matrix.png']),
+    ]
+    cols_cm = st.columns(2)
+    shown = False
+    for idx, (title, candidates) in enumerate(cm_candidates):
+        path = _first_existing_path(candidates)
+        with cols_cm[idx % 2]:
+            if path:
+                shown = True
+                st.caption(title)
+                st.image(path, use_column_width=True)
+    if not shown:
+        st.info("No confusion matrix images found.")
 
 def show_clinical_workflow(patient_data):
     """Display clinical workflow integration"""
@@ -1510,7 +1608,7 @@ def show_fairness_analysis():
             color_continuous_scale='Viridis'
         )
         fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Add interpretation
         max_perf = max(performance)
@@ -1553,6 +1651,51 @@ def export_risk_data(patient_data):
         json.dump(risk_data, f, indent=2)
     
     st.success("📈 Risk data exported to outputs/risk_data.json")
+
+def _ensure_outputs_dir():
+    try:
+        os.makedirs('outputs', exist_ok=True)
+    except Exception:
+        pass
+
+def save_manual_patient_to_csv(patient_dict, csv_path: str = 'outputs/added_patients.csv'):
+    """
+    Persist a manually added patient to a flat CSV so it can be reloaded later.
+    Stores a minimal superset compatible with upload flow.
+    """
+    _ensure_outputs_dir()
+    row = {
+        'Patient_ID': patient_dict.get('patient_id', ''),
+        'Age': patient_dict.get('age', ''),
+        'Gender': patient_dict.get('gender', ''),
+        'HR': patient_dict.get('heart_rate', ''),
+        'SBP': patient_dict.get('sbp', ''),
+        'DBP': patient_dict.get('dbp', ''),
+        'MAP': patient_dict.get('map', ''),
+        'Temp': patient_dict.get('temperature', ''),
+        'Resp': patient_dict.get('respiratory_rate', ''),
+        'O2Sat': patient_dict.get('oxygen_saturation', ''),
+        'FiO2': patient_dict.get('fio2', ''),
+        'pH': patient_dict.get('ph', ''),
+        'PaCO2': patient_dict.get('paco2', ''),
+        'SaO2': patient_dict.get('sao2', ''),
+        'BaseExcess': patient_dict.get('base_excess', ''),
+        'HCO3': patient_dict.get('hco3', ''),
+        'Lactate': patient_dict.get('lactate', ''),
+        'WBC': patient_dict.get('wbc', ''),
+        'Platelets': patient_dict.get('platelets', ''),
+        'Creatinine': patient_dict.get('creatinine', ''),
+        'Bilirubin_total': patient_dict.get('bilirubin_total', ''),
+        'Timestamp': (patient_dict.get('timestamp') or datetime.now()).isoformat(),
+        'Source': 'manual'
+    }
+    df_row = pd.DataFrame([row])
+    file_exists = os.path.exists(csv_path)
+    try:
+        df_row.to_csv(csv_path, mode='a', header=not file_exists, index=False)
+        return True, csv_path
+    except Exception as e:
+        return False, str(e)
 
 def export_performance_data():
     """Export model performance data"""
@@ -2132,7 +2275,12 @@ def main():
                 st.session_state['new_patient'] = new_patient_data
                 st.session_state['selected_patient'] = new_patient_id
                 
-                st.success(f"✅ Added patient {new_patient_id}")
+                # Persist to CSV
+                ok, info = save_manual_patient_to_csv(new_patient_data)
+                if ok:
+                    st.success(f"✅ Added patient {new_patient_id} and saved to {info}")
+                else:
+                    st.warning(f"⚠️ Added patient {new_patient_id}, but saving failed: {info}")
                 st.rerun()
     
     # File Upload Feature
@@ -2251,9 +2399,10 @@ def main():
         export_performance_data()
     
     # Main dashboard tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "📊 Risk Overview", 
         "🤖 Model Predictions", 
+        "📊 Model Curves",
         "📈 Risk Trajectory", 
         "🧠 Explainability",
         "🧠 Dynamic Explainability",
@@ -2269,21 +2418,24 @@ def main():
         show_model_predictions(patient_data)
     
     with tab3:
-        show_risk_trajectory(patient_data)
+        show_model_curves()
     
     with tab4:
-        show_explainability(patient_data)
+        show_risk_trajectory(patient_data)
     
     with tab5:
-        show_dynamic_explainability(patient_data)
+        show_explainability(patient_data)
     
     with tab6:
-        show_patient_data(patient_data)
+        show_dynamic_explainability(patient_data)
     
     with tab7:
-        show_clinical_workflow(patient_data)
+        show_patient_data(patient_data)
     
     with tab8:
+        show_clinical_workflow(patient_data)
+    
+    with tab9:
         show_fairness_analysis()
     
     # Footer removed per request
