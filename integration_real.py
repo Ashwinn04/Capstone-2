@@ -148,6 +148,8 @@ class SepsisPredictionIntegration:
         # Allow temporarily disabling deep learning models (default: disabled per current request)
         # Set DISABLE_DL=0 to enable
         self.disable_deep_learning_models = str(os.getenv('DISABLE_DL', '1')).lower() in ('1', 'true', 'yes')
+        # Per-model thresholds loaded from training metrics (fallback to defaults if missing)
+        self.baseline_thresholds: Dict[str, float] = {}
 
         # Initialize the system
         self._initialize_system()
@@ -180,6 +182,9 @@ class SepsisPredictionIntegration:
             
             # Load feature selector (if available)
             self._load_feature_selector()
+
+            # Load per-model optimal thresholds for baseline models (if available)
+            self._load_baseline_thresholds()
             
             self.is_initialized = True
             print("✅ Integration system initialized successfully!")
@@ -1055,9 +1060,16 @@ class SepsisPredictionIntegration:
                     predictions[name] = {
                         'risk_score': prob_display,  # Use capped value for display
                         'risk_score_raw': prob,  # Keep original for debugging
-                        'risk_level': 'High' if prob_display >= 0.7 else 'Medium' if prob_display >= 0.3 else 'Low',
+                        'risk_level': (
+                            'High'
+                            if prob_display >= self.baseline_thresholds.get(name, 0.7)
+                            else 'Medium'
+                            if prob_display >= float(os.getenv('BASELINE_MEDIUM_THRESHOLD', '0.3'))
+                            else 'Low'
+                        ),
                         'confidence': confidence,
-                        'extreme_probability_warning': prob >= 0.999  # Flag for dashboard
+                        'extreme_probability_warning': prob >= 0.999,  # Flag for dashboard
+                        'threshold_used': self.baseline_thresholds.get(name, 0.7)
                     }
                 except Exception as e:
                     print(f"⚠️ Error with {name}: {e}")
@@ -1331,6 +1343,40 @@ class SepsisPredictionIntegration:
             import traceback
             traceback.print_exc()
             return None
+    
+    def _load_baseline_thresholds(self):
+        """Load per-model optimal thresholds learned during training."""
+        try:
+            candidates = [
+                os.path.join('outputs', 'models', 'baseline_models_metrics.json'),
+                'baseline_models_metrics.json',
+                os.path.join('Capstone', 'outputs', 'models', 'baseline_models_metrics.json')
+            ]
+            metrics = None
+            for path in candidates:
+                if os.path.exists(path):
+                    try:
+                        with open(path, 'r') as f:
+                            metrics = json.load(f)
+                        print(f"✅ Loaded baseline thresholds from {path}")
+                        break
+                    except Exception as e:
+                        print(f"⚠️ Could not read thresholds from {path}: {e}")
+                        continue
+            if isinstance(metrics, dict):
+                for key in ('logistic_regression', 'random_forest', 'xgboost'):
+                    try:
+                        th = metrics.get(key, {}).get('optimal_threshold', None)
+                        if th is not None:
+                            self.baseline_thresholds[key] = float(th)
+                    except Exception:
+                        continue
+            # Fallback defaults if none loaded
+            if not self.baseline_thresholds:
+                self.baseline_thresholds = {}
+                print("ℹ️ No per-model thresholds found; using defaults (High=0.7, Medium=0.3).")
+        except Exception as e:
+            print(f"⚠️ Error loading baseline thresholds: {e}")
     
     def predict_deep_learning_models(self, patient_data):
         """Get predictions from Person C's deep learning models"""

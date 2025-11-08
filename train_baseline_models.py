@@ -277,7 +277,7 @@ def find_optimal_threshold(y_true, y_prob, method='youden'):
 
 
 def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/models'):
-    """Train all baseline models"""
+    """Train all baseline models with proper validation calibration and class imbalance handling"""
     os.makedirs(output_dir, exist_ok=True)
     
     results = {}
@@ -314,23 +314,31 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         X_train_fs, X_test_fs = X_train_scaled, X_test_scaled
         fs = None
 
-    # Apply SMOTE to handle class imbalance (on training set only)
+    # Create validation split from training (patient-level already applied upstream if available)
+    print("\n" + "="*60)
+    print("Creating validation split (for calibration)")
+    print("="*60)
+    X_tr_sub, X_val_sub, y_tr_sub, y_val_sub = train_test_split(
+        X_train_fs, y_train, test_size=0.15, stratify=y_train, random_state=42
+    )
+    print(f"✅ Train-sub: {X_tr_sub.shape}, Val: {X_val_sub.shape}")
+
+    # Apply SMOTE ONLY for LR on the train-sub set
     smote_applied = False
     if SMOTE_AVAILABLE:
         try:
-            # Guard against very low positives for k_neighbors
-            pos = int(y_train.sum())
+            pos = int(y_tr_sub.sum())
             k_neighbors = 1 if pos <= 1 else min(5, pos - 1)
             smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
-            X_train_bal, y_train_bal = smote.fit_resample(X_train_fs, y_train)
-            print(f"✅ Applied SMOTE: train size {X_train_fs.shape} -> {X_train_bal.shape}")
+            X_tr_bal, y_tr_bal = smote.fit_resample(X_tr_sub, y_tr_sub)
+            print(f"✅ Applied SMOTE for LR only: {X_tr_sub.shape} -> {X_tr_bal.shape}")
             smote_applied = True
         except Exception as e:
-            print(f"⚠️ SMOTE failed ({e}), proceeding without it")
-            X_train_bal, y_train_bal = X_train_fs, y_train
+            print(f"⚠️ SMOTE failed for LR path ({e}), proceeding without it")
+            X_tr_bal, y_tr_bal = X_tr_sub, y_tr_sub
     else:
         print("⚠️ imblearn not available; skipping SMOTE")
-        X_train_bal, y_train_bal = X_train_fs, y_train
+        X_tr_bal, y_tr_bal = X_tr_sub, y_tr_sub
 
     # Save preprocessing components
     imputer_path = os.path.join(output_dir, 'baseline_imputer.pkl')
@@ -371,7 +379,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         )
         print(f"🔍 LR hyperparameter search: {lr_search.n_iter} candidates × {lr_search.cv} folds = {lr_search.n_iter * lr_search.cv} fits")
         t0 = time.time()
-        lr_search.fit(X_train_bal, y_train_bal)
+        lr_search.fit(X_tr_bal, y_tr_bal)
         print(f"⏱️ LR search completed in {time.time() - t0:.1f}s")
         lr_best = lr_search.best_estimator_
         print(f"✅ LR best params: {lr_search.best_params_}")
@@ -379,11 +387,14 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         print(f"⚠️ LR tuning failed ({e}), using defaults")
         lr_best = lr_base
 
-    print("📏 Calibrating LR (isotonic, cv=5)...")
+    print("📏 Calibrating LR on validation (isotonic, prefit)...")
     t0 = time.time()
-    lr_cal = CalibratedClassifierCV(lr_best, cv=5, method='isotonic')
-    lr_cal.fit(X_train_bal, y_train_bal)
-    print(f"⏱️ LR calibration completed in {time.time() - t0:.1f}s")
+    # Fit LR on (possibly SMOTE) train-sub
+    lr_best.fit(X_tr_bal, y_tr_bal)
+    # Calibrate on true-prevalence validation set
+    lr_cal = CalibratedClassifierCV(lr_best, cv='prefit', method='isotonic')
+    lr_cal.fit(X_val_sub, y_val_sub)
+    print(f"⏱️ LR calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
 
     y_prob_lr = lr_cal.predict_proba(X_test_fs)[:, 1]
 
@@ -433,7 +444,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
     print("="*60)
 
     rf_base = RandomForestClassifier(
-        class_weight=None if smote_applied else 'balanced_subsample',
+        class_weight='balanced_subsample',
         random_state=42,
         n_jobs=-1,
         verbose=1
@@ -459,7 +470,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
         print(f"🔍 RF hyperparameter search: {rf_search.n_iter} candidates × {rf_search.cv} folds = {total_fits} fits")
         print("⏳ This step can take several minutes depending on CPU cores.")
         t0 = time.time()
-        rf_search.fit(X_train_bal, y_train_bal)
+        rf_search.fit(X_tr_sub, y_tr_sub)
         print(f"⏱️ RF search completed in {time.time() - t0:.1f}s")
         rf_best = rf_search.best_estimator_
         print(f"✅ RF best params: {rf_search.best_params_}")
@@ -469,9 +480,12 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
 
     print("📏 Calibrating RF (isotonic, cv=5)...")
     t0 = time.time()
-    rf_cal = CalibratedClassifierCV(rf_best, cv=5, method='isotonic')
-    rf_cal.fit(X_train_bal, y_train_bal)
-    print(f"⏱️ RF calibration completed in {time.time() - t0:.1f}s")
+    # Fit RF on original (no SMOTE) train-sub
+    rf_best.fit(X_tr_sub, y_tr_sub)
+    # Calibrate on true-prevalence validation set
+    rf_cal = CalibratedClassifierCV(rf_best, cv='prefit', method='isotonic')
+    rf_cal.fit(X_val_sub, y_val_sub)
+    print(f"⏱️ RF calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
 
     y_prob_rf = rf_cal.predict_proba(X_test_fs)[:, 1]
 
@@ -524,13 +538,18 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
     print("="*60)
 
     if XGBOOST_AVAILABLE:
+        # Compute scale_pos_weight from original train-sub prevalence
+        num_pos = float(y_tr_sub.sum())
+        num_neg = float((y_tr_sub == 0).sum())
+        spw = num_neg / max(num_pos, 1.0)
         xgb_base = xgb.XGBClassifier(
             n_estimators=300,
             learning_rate=0.05,
             max_depth=6,
             subsample=0.8,
             colsample_bytree=0.8,
-            eval_metric='logloss',
+            eval_metric='aucpr',
+            scale_pos_weight=spw,
             random_state=42,
             n_jobs=-1,
             verbosity=1
@@ -555,7 +574,7 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
             )
             print(f"🔍 XGB hyperparameter search: {xgb_search.n_iter} candidates × {xgb_search.cv} folds = {xgb_search.n_iter * xgb_search.cv} fits")
             t0 = time.time()
-            xgb_search.fit(X_train_bal, y_train_bal)
+            xgb_search.fit(X_tr_sub, y_tr_sub)
             print(f"⏱️ XGB search completed in {time.time() - t0:.1f}s")
             xgb_best = xgb_search.best_estimator_
             print(f"✅ XGB best params: {xgb_search.best_params_}")
@@ -597,9 +616,21 @@ def train_baseline_models(X_train, X_test, y_train, y_test, output_dir='outputs/
 
     print("📏 Calibrating XGB/HGB (isotonic, cv=5)...")
     t0 = time.time()
-    xgb_cal = CalibratedClassifierCV(xgb_best, cv=5, method='isotonic')
-    xgb_cal.fit(X_train_bal, y_train_bal)
-    print(f"⏱️ XGB/HGB calibration completed in {time.time() - t0:.1f}s")
+    # Refit best XGB with early stopping on validation (true prevalence)
+    try:
+        xgb_best.set_params(eval_metric='aucpr')
+    except Exception:
+        pass
+    xgb_best.fit(
+        X_tr_sub, y_tr_sub,
+        eval_set=[(X_val_sub, y_val_sub)],
+        early_stopping_rounds=50,
+        verbose=False
+    )
+    # Calibrate on validation set (prefit)
+    xgb_cal = CalibratedClassifierCV(xgb_best, cv='prefit', method='isotonic')
+    xgb_cal.fit(X_val_sub, y_val_sub)
+    print(f"⏱️ XGB/HGB calibration completed in {time.time() - t0:.1f}s (prefit on validation)")
 
     y_prob_xgb = xgb_cal.predict_proba(X_test_fs)[:, 1]
 

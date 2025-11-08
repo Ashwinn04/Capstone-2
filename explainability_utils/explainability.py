@@ -500,12 +500,48 @@ def _simulate_temporal_changes(patient_data: Dict[str, Any], hour: int, feature_
         'lactate': 4, 'wbc': 5, 'creatinine': 6, 'age': 7
     }
     
-    for key, value in patient_data.items():
-        if key in feature_mapping and feature_mapping[key] < len(feature_names):
-            idx = feature_mapping[key]
-            # Add temporal variation based on hour
-            temporal_factor = 1 + 0.1 * np.sin(hour * np.pi / 12)  # 12-hour cycle
-            feature_vector[idx] = value * temporal_factor
+    # Helper to retrieve values from nested structures
+    def _lookup(pd_dict: Dict[str, Any], key: str) -> Optional[float]:
+        if key in pd_dict:
+            return pd_dict.get(key)
+        # Look into common nested dicts used by the dashboard
+        for container_key in ('vital_signs', 'lab_values', 'clinical_scores'):
+            sub = pd_dict.get(container_key, {})
+            if isinstance(sub, dict) and key in sub:
+                return sub.get(key)
+        return None
+    
+    for logical_key, idx in feature_mapping.items():
+        if idx >= len(feature_names):
+            continue
+        value = _lookup(patient_data, logical_key)
+        if value is None:
+            # Try alternate casing commonly used in raw data
+            alt_map = {
+                'heart_rate': ['HR', 'hr'],
+                'map': ['MAP', 'map'],
+                'temperature': ['Temp', 'temperature', 'temp'],
+                'respiratory_rate': ['Resp', 'RR', 'respiratory_rate', 'rr'],
+                'lactate': ['Lactate', 'lactate'],
+                'wbc': ['WBC', 'wbc'],
+                'creatinine': ['Creatinine', 'creatinine'],
+                'age': ['Age', 'age']
+            }
+            for alt in alt_map.get(logical_key, []):
+                value = _lookup(patient_data, alt)
+                if value is not None:
+                    break
+        try:
+            if value is not None:
+                value_num = float(value)
+            else:
+                value_num = 0.0
+        except Exception:
+            value_num = 0.0
+        
+        # Add temporal variation based on hour
+        temporal_factor = 1 + 0.1 * np.sin(hour * np.pi / 12)  # 12-hour cycle
+        feature_vector[idx] = value_num * temporal_factor
     
     return feature_vector
 
