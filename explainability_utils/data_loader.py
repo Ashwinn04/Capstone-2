@@ -13,8 +13,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 import joblib
 
-from .data_augmentation import get_train_augmentations
-
 warnings.filterwarnings('ignore')
 
 
@@ -109,8 +107,7 @@ class ICUDataset(Dataset):
     def __init__(self, data: pd.DataFrame, features: List[str],
                  sequence_length: int = 48, 
                  prediction_horizon: int = 6,
-                 step_size: int = 1,
-                 augmentation: Optional[callable] = None):
+                 step_size: int = 1):
         """
         Initialize ICU Dataset
         
@@ -120,7 +117,6 @@ class ICUDataset(Dataset):
             sequence_length: Maximum sequence length in hours
             prediction_horizon: Hours ahead to predict sepsis
             step_size: Step size for creating sequences in hours
-            augmentation: Optional augmentation to apply to features
         """
         self.data = data.copy()
         self.features = features
@@ -128,7 +124,6 @@ class ICUDataset(Dataset):
         self.sequence_length = sequence_length
         self.prediction_horizon = prediction_horizon
         self.step_size = step_size
-        self.augmentation = augmentation
             
         # Group by patient and create sequences
         self.sequences = self._create_sequences()
@@ -205,100 +200,43 @@ class ICUDataset(Dataset):
         delta_t = torch.FloatTensor(seq['delta_t'])
         target = torch.FloatTensor([seq['target']]) # Use FloatTensor for BCEWithLogitsLoss
         
-        # Apply augmentation if provided
-        if self.augmentation:
-            features = self.augmentation(features)
-            
         return features, mask, delta_t, target
 
 
-def create_data_loaders(
-    train_data: pd.DataFrame,
-    val_data: pd.DataFrame,
-    test_data: pd.DataFrame,
-    features: List[str],
-    batch_size: int = 128,
-    sequence_length: int = 48,
-    prediction_horizon: int = 6,
-    step_size: int = 1,
-    use_augmentation: bool = False,
-    use_weighted_sampler: bool = False
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def create_data_loaders(train_data: pd.DataFrame, val_data: pd.DataFrame, 
+                       test_data: pd.DataFrame, features: List[str],
+                       batch_size: int = 64, sequence_length: int = 48, 
+                       prediction_horizon: int = 6, step_size: int = 1
+                       ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
-    Create PyTorch DataLoaders for train, validation, and test sets.
+    Create train, validation, and test data loaders
+    
+    Args:
+        train_data: Training data
+        val_data: Validation data  
+        test_data: Test data
+        features: Feature column names
+        batch_size: Batch size for training
+        sequence_length: Maximum sequence length in hours
+        prediction_horizon: Prediction horizon in hours
+        step_size: Step size in hours for creating sequences
+        
+    Returns:
+        Tuple of (train_loader, val_loader, test_loader)
     """
-    print(f"\nCreating data loaders with batch size {batch_size}...")
     
-    train_augmentations = get_train_augmentations() if use_augmentation else None
+    # Create datasets
+    train_dataset = ICUDataset(train_data, features, sequence_length, prediction_horizon, step_size)
+    val_dataset = ICUDataset(val_data, features, sequence_length, prediction_horizon, step_size)
+    test_dataset = ICUDataset(test_data, features, sequence_length, prediction_horizon, step_size)
     
-    train_dataset = ICUDataset(
-        data=train_data,
-        features=features,
-        sequence_length=sequence_length,
-        prediction_horizon=prediction_horizon,
-        step_size=step_size,
-        augmentation=train_augmentations
-    )
-    
-    val_dataset = ICUDataset(
-        data=val_data,
-        features=features,
-        sequence_length=sequence_length,
-        prediction_horizon=prediction_horizon,
-        step_size=step_size
-    )
-    
-    test_dataset = ICUDataset(
-        data=test_data,
-        features=features,
-        sequence_length=sequence_length,
-        prediction_horizon=prediction_horizon,
-        step_size=step_size
-    )
-    
-    train_sampler = None
-    if use_weighted_sampler:
-        print("Using WeightedRandomSampler for training...")
-        # Calculate sample weights to address class imbalance
-        labels = np.array([s['target'] for s in train_dataset.sequences])
-        pos_indices = np.where(labels == 1)[0]
-        neg_indices = np.where(labels == 0)[0]
-        
-        pos_weight = len(neg_indices) / len(pos_indices) if len(pos_indices) > 0 else 1
-        
-        sample_weights = np.ones(len(train_dataset))
-        sample_weights[pos_indices] = pos_weight
-        
-        train_sampler = torch.utils.data.WeightedRandomSampler(
-            weights=sample_weights,
-            num_samples=len(sample_weights),
-            replacement=True
-        )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=(train_sampler is None), # Shuffle if not using sampler
-        sampler=train_sampler,
-        num_workers=1, # Reduced from os.cpu_count() // 2
-        pin_memory=False # Disabled for MPS/CPU
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size * 2, # Use larger batch size for validation
-        shuffle=False,
-        num_workers=1, # Reduced from os.cpu_count() // 2
-        pin_memory=False # Disabled for MPS/CPU
-    )
-    
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size * 2, # Use larger batch size for testing
-        shuffle=False,
-        num_workers=1, # Reduced from os.cpu_count() // 2
-        pin_memory=False # Disabled for MPS/CPU
-    )
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
+                             num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False,
+                           num_workers=0, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size * 2, shuffle=False,
+                            num_workers=0, pin_memory=True)
     
     return train_loader, val_loader, test_loader
 

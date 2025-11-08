@@ -132,17 +132,20 @@
         <li><a href="#key-modules">5) Key Modules / Components</a></li>
         <li><a href="#api-docs">6) API Documentation</a></li>
         <li><a href="#frontend">7) Frontend Summary</a></li>
-        <li><a href="#deployment">8) Deployment Guide</a></li>
-        <li><a href="#security">9) Security & Performance Notes</a></li>
-        <li><a href="#contribute">10) How to Extend / Contribute</a></li>
-        <li><a href="#demo">11) Demo & Review Preparation</a></li>
-        <li><a href="#todos">12) Outstanding TODOs / Known Issues</a></li>
-        <li><a href="#impact">13) Novelty & Societal Impact</a></li>
-        <li><a href="#perf-ops">14) Performance & Ops Tuning</a></li>
-        <li><a href="#professor-qa">15) Professor Q&A</a></li>
-        <li><a href="#panel-review">16) Panel Review Guide</a></li>
-        <li><a href="#individual-questions">17) Individual Questions</a></li>
-        <li><a href="#visuals">18) Visual Gallery</a></li>
+        <li><a href="#database">8) Database / Persistence</a></li>
+        <li><a href="#testing">9) Testing & CI/CD</a></li>
+        <li><a href="#deployment">10) Deployment Guide</a></li>
+        <li><a href="#security">11) Security & Performance Notes</a></li>
+        <li><a href="#contribute">12) How to Extend / Contribute</a></li>
+        <li><a href="#demo">13) Demo & Review Preparation</a></li>
+        <li><a href="#todos">14) Outstanding TODOs / Known Issues</a></li>
+        <li><a href="#glossary">15) Glossary / Reference</a></li>
+        <li><a href="#impact">16) Novelty & Societal Impact</a></li>
+        <li><a href="#perf-ops">17) Performance & Ops Tuning</a></li>
+        <li><a href="#runbook">18) Deployment Runbook</a></li>
+        <li><a href="#faq">19) FAQ</a></li>
+        <li><a href="#professor-qa">20) Professor Q&A</a></li>
+        <li><a href="#visuals">21) Visual Gallery</a></li>
       </ul>
     </div>
     <section id="overview" class="section doc-section">
@@ -179,81 +182,30 @@
       <details open>
         <summary>Results — Model Performance (Real Dataset)</summary>
         <div class="content">
-          <h3>Validation (patient-wise split, ensemble of 3 seeds)</h3>
+          <h3>Validation AUROC (12 epochs, patient-wise split)</h3>
           <ul>
-            <li><strong>GRU-D</strong>: AUPRC 0.2079, AUROC 0.5537</li>
-            <li><strong>LSTM</strong>: AUPRC 0.1371, AUROC 0.5424</li>
-            <li><strong>CNN_LSTM</strong>: AUPRC 0.1883, AUROC 0.5487</li>
-            <li><strong>Transformer</strong>: AUPRC 0.1471, AUROC 0.5263</li>
+            <li><strong>GRU-D</strong>: 0.8319</li>
+            <li><strong>LSTM</strong>: 0.8401</li>
+            <li><strong>CNN_LSTM</strong>: 0.6968</li>
+            <li><strong>Transformer</strong>: 0.8296</li>
           </ul>
-          <h3>Test (calibrated, ensemble of 3 seeds)</h3>
+          <h3>Test Accuracy (threshold = 0.5)</h3>
           <ul>
-            <li><strong>GRU-D</strong>: AUPRC 0.1355, AUROC 0.4970, Brier 0.1114</li>
-            <li><strong>LSTM</strong>: AUPRC 0.1353, AUROC 0.5430, Brier 0.1112</li>
-            <li><strong>CNN_LSTM</strong>: AUPRC 0.1342, AUROC 0.5412, Brier 0.1111</li>
-            <li><strong>Transformer</strong>: AUPRC 0.1423, AUROC 0.5382, Brier 0.1112</li>
+            <li><strong>GRU-D</strong>: 86.69%</li>
+            <li><strong>LSTM</strong>: 86.68%</li>
+            <li><strong>CNN_LSTM</strong>: 95.71%</li>
+            <li><strong>Transformer</strong>: 69.25%</li>
           </ul>
-          <p class="warn">Note: Dataset positive rate ≈ 2.17%. Prefer AUPRC/AUROC over raw accuracy under imbalance. Reported results include probability calibration and thresholding at Recall≈0.85.</p>
-          <h3>Model Quality Assessment</h3>
-          <p><strong>Overall Assessment</strong>: Modest performance. Test AUPRC ≈ 0.13–0.14 and AUROC ≈ 0.50–0.54 indicate weak discrimination above random chance, but better than baseline (AUPRC ≈ 0.02 for random classifier). Calibration is good (Brier ≈ 0.11), suggesting probabilities are reliable; the bottleneck is discrimination (ranking/separation), not calibration.</p>
-          <p><strong>Key Findings</strong>:</p>
-          <ul>
-            <li><strong>Calibration</strong>: Excellent (Brier scores ~0.11 across all models). Probabilities are well-calibrated, meaning predicted probabilities match observed frequencies.</li>
-            <li><strong>Discrimination</strong>: Limited. AUPRC ~0.13–0.14 is low but expected given the severe class imbalance (2.17% positive rate). AUROC ~0.50–0.54 indicates minimal separation between positive and negative cases.</li>
-            <li><strong>Model Comparison</strong>: Transformer shows slightly better AUPRC (0.1423), while LSTM achieves the best AUROC (0.5430). GRU-D shows the largest drop from validation to test (AUPRC: 0.2079 → 0.1355), suggesting potential overfitting.</li>
-            <li><strong>Thresholding</strong>: At Recall≈0.85, all models achieve similar precision (~0.12–0.13), indicating limited utility for clinical decision-making at this operating point.</li>
-          </ul>
-          <h3>Recommendations for Improvement</h3>
-          <p><strong>Priority 1: Data & Windowing</strong></p>
-          <ul>
-            <li>Increase positive sample density by sampling multiple windows per positive patient and fewer per negative patient.</li>
-            <li>Experiment with window lengths (24h vs 48h) and step sizes (2–3h vs 6h) to capture temporal patterns more effectively.</li>
-            <li>Use balanced or moderately imbalanced minibatches during training.</li>
-          </ul>
-          <p><strong>Priority 2: Loss Function & Class Imbalance</strong></p>
-          <ul>
-            <li>Sweep <code>pos_weight</code> values (e.g., 5–30) for BCEWithLogitsLoss to better handle the 2.17% positive rate.</li>
-            <li>Experiment with Focal Loss parameters: α ∈ [0.1–0.5], γ ∈ [1–3] to focus learning on hard examples.</li>
-          </ul>
-          <p><strong>Priority 3: Hyperparameter Tuning</strong></p>
-          <ul>
-            <li>Learning rate: Try 5e-4, 1e-3 (current), 2e-3.</li>
-            <li>Weight decay: Test 1e-5, 1e-4, 5e-4.</li>
-            <li>Dropout: GRU-D/LSTM/CNN-LSTM: 0.2–0.5; Transformer: 0.1–0.3.</li>
-            <li>Gradient clipping: 0.5–1.0 (currently 1.0).</li>
-          </ul>
-          <p><strong>Priority 4: Architecture Enhancements</strong></p>
-          <ul>
-            <li>GRU-D: Try hidden_size=256, ensure decay mechanisms use stable feature means per feature.</li>
-            <li>LSTM: Add layer normalization between layers, try hidden_size=256 or 3 layers.</li>
-            <li>CNN-LSTM: Add a third conv block (128→256) or larger kernels (k=5) to capture slower trends.</li>
-            <li>Transformer: Add learned CLS token for pooling, try nhead=4, layers=2–3 for smaller models.</li>
-          </ul>
-          <p><strong>Priority 5: Feature Engineering</strong></p>
-          <ul>
-            <li>Add first-order deltas and rolling statistics (mean, slope) for key features (HR, Temp, WBC, Lactate) over 6h windows.</li>
-            <li>Include observation frequency/mask ratios as features (missingness patterns).</li>
-          </ul>
-          <p><strong>Priority 6: Ensembling</strong></p>
-          <ul>
-            <li>Weight ensemble by validation AUPRC instead of uniform averaging.</li>
-            <li>Consider snapshot ensemble: average last 5–10 checkpoints around the best epoch for each seed.</li>
-          </ul>
-          <p class="warn"><strong>Note</strong>: Simply training more epochs is unlikely to improve performance significantly, as early stopping and learning rate scheduling are already in place. Focus on data quality, feature engineering, and hyperparameter tuning instead.</p>
+          <p class="warn">Note: Dataset positive rate ≈ 2.17%. Accuracy can be inflated under heavy class imbalance; AUROC is the preferred comparator.</p>
           <h3>How to reproduce</h3>
-          <pre><code data-lang="bash"># Activate env
+          <pre><code data-lang="bash"># Train all deep learning models on Dataset.csv
 source venv/bin/activate
+MPLBACKEND=Agg MPLCONFIGDIR=outputs/mplconfig XDG_CACHE_HOME=outputs/cache \
+  python train_models.py --data_path Dataset.csv --epochs 12 --batch_size 64 --models all
 
-# Train all models (3 seeds, calibrated), logs to outputs/logs/
-python train_models.py \
-  --data_path Dataset.csv --models all \
-  --epochs 60 --batch_size 128 --learning_rate 1e-3 \
-  --sequence_length 48 --prediction_horizon 6 --step_size 1 \
-  --num_seeds 3 --seed 42 --loss_function BCE --label_smoothing 0.05
-
-# Evaluate test set and write CSV to outputs/results/
-python evaluate_accuracy.py --data_path Dataset.csv --seed 42</code></pre>
-          <p>Artifacts are written to <code>outputs/models/</code> (checkpoints, configs, thresholds, calibration), <code>outputs/results/</code> (CSV summaries), and <code>outputs/figures/</code> (training curves).</p>
+# Compute test-set accuracy for each model
+python evaluate_accuracy.py</code></pre>
+          <p>Artifacts are written to <code>outputs/models/</code> (checkpoints), <code>outputs/results/</code> (JSON metrics), and <code>outputs/figures/</code> (training curves).</p>
         </div>
       </details>
     </section>
@@ -318,28 +270,9 @@ docker run -p 8501:8501 sepsis-dashboard
             <li><strong>Dataset missing</strong>: <span class="kbd">Dataset.csv</span> required by dashboard; demo still runs with sample data but fewer features.</li>
             <li><strong>Ports busy</strong>: Change to <span class="kbd">-p 8001:8000</span> or <span class="kbd">-p 8502:8501</span>.</li>
             <li><strong>SHAP/Captum heavy</strong>: Some environments need extra build tools; Docker image installs <span class="kbd">build-essential</span>.</li>
-            <li><strong>Mac ARM + Torch (MPS)</strong>: Apple Silicon MPS has limitations. The codebase includes fixes for:
-              <ul>
-                <li><strong>Float64 → Float32</strong>: MPS doesn't support float64. All tensors are explicitly cast to float32 (pos_weight, logits, targets, etc.).</li>
-                <li><strong>Transformer padding mask</strong>: Nested tensor ops are unsupported. The Transformer model uses manual masked pooling instead of <code>src_key_padding_mask</code>.</li>
-                <li><strong>Mixed precision</strong>: AMP/GradScaler is disabled for MPS (only enabled for CUDA). MPS uses standard FP32.</li>
-                <li><strong>Fallback option</strong>: If issues persist, set <code>PYTORCH_ENABLE_MPS_FALLBACK=1</code> to fall back to CPU for unsupported ops (slower but more compatible).</li>
-              </ul>
-            </li>
+            <li><strong>Mac ARM + Torch</strong>: Use CPU wheels (already implied by requirements) or conda-forge if needed.</li>
             <li><strong>Absolute paths</strong>: Backend/dashboard add an absolute <span class="kbd">project_root</span>; see Known Issues for the fix.</li>
           </ul>
-          <h3>Quick Reference Commands</h3>
-          <pre><code data-lang="bash"># Complete system
-docker-compose up -d
-
-# Dev: API + Dashboard (local)
-python api_service.py
-streamlit run dashboard_real.py
-
-# Build individual images
-docker build --target production -t sepsis-api .
-docker build --target dashboard -t sepsis-dashboard .
-</code></pre>
         </div>
       </details>
     </section>
@@ -538,16 +471,36 @@ async def predict_sepsis(patient_data: PatientData, background_tasks: Background
         </div>
       </details>
     </section>
-    <section id="deployment" class="section doc-section">
+    <section id="database" class="section doc-section">
       <details open>
-        <summary>8) Deployment Guide</summary>
+        <summary>8) Database / Persistence</summary>
         <div class="content">
-          <h3>Data Persistence & Logging</h3>
           <ul>
             <li><strong>Files</strong>: JSON/CSV artifacts under <code>outputs/</code> (prediction logs, reports, performance)</li>
             <li><strong>Docker Compose (optional)</strong>: Redis and Postgres are defined but not strictly required by current code; future-ready.</li>
             <li><strong>Logging</strong>: API appends JSON Lines to <code>outputs/prediction_log.jsonl</code>.</li>
           </ul>
+        </div>
+      </details>
+    </section>
+    <section id="testing" class="section doc-section">
+      <details open>
+        <summary>9) Testing & CI/CD</summary>
+        <div class="content">
+          <p>No CI configured in this repo. For local checks:</p>
+          <pre><code data-lang="bash"># Suggested local checks
+python -m uvicorn api_service:app --port 8000 --reload  # API smoke test
+streamlit run dashboard_real.py                         # UI smoke test
+python demo_complete_system.py                          # End-to-end demo
+</code></pre>
+          <p>Future CI: lint (flake8/black), unit tests (pytest), and API contract tests.</p>
+        </div>
+      </details>
+    </section>
+    <section id="deployment" class="section doc-section">
+      <details open>
+        <summary>10) Deployment Guide</summary>
+        <div class="content">
           <h3>Dockerfile Stages</h3>
           <ul>
             <li><strong>production</strong>: Runs API (FastAPI/Uvicorn)</li>
@@ -577,7 +530,7 @@ services:
     </section>
     <section id="security" class="section doc-section">
       <details open>
-        <summary>9) Security & Performance Notes</summary>
+        <summary>11) Security & Performance Notes</summary>
         <div class="content">
           <ul>
             <li><strong>Sensitive data</strong>: Do not commit real patient data. Keep any keys/configs in <code>.env</code>.</li>
@@ -590,7 +543,7 @@ services:
     </section>
     <section id="contribute" class="section doc-section">
       <details open>
-        <summary>10) How to Extend / Contribute</summary>
+        <summary>12) How to Extend / Contribute</summary>
         <div class="content">
           <ol>
             <li><strong>Add a new endpoint</strong>: Create a Pydantic model, add <code>@app.post("/new-endpoint")</code>, implement logic, and update docs.</li>
@@ -604,7 +557,7 @@ services:
     </section>
     <section id="demo" class="section doc-section">
       <details open>
-        <summary>11) Demo & Review Preparation</summary>
+        <summary>13) Demo & Review Preparation</summary>
         <div class="content">
           <h3>Two-minute Demo Script</h3>
           <ol>
@@ -632,7 +585,7 @@ services:
     </section>
     <section id="todos" class="section doc-section">
       <details open>
-        <summary>12) Outstanding TODOs / Known Issues</summary>
+        <summary>14) Outstanding TODOs / Known Issues</summary>
         <div class="content">
           <ul>
             <li><strong>Absolute paths</strong>: <code>api_service.py</code> and <code>dashboard_real.py</code> set <code>project_root = '/Users/ashwinnair/Downloads/Capstone 2'</code>. Replace with <code>Path(__file__).parent</code> or environment variable for portability.</li>
@@ -653,9 +606,41 @@ if project_root not in sys.path:
         </div>
       </details>
     </section>
+    <section id="glossary" class="section doc-section">
+      <details open>
+        <summary>15) Glossary / Reference</summary>
+        <div class="content">
+          <h3>Clinical Terms</h3>
+          <ul>
+            <li><strong>SIRS</strong>: Systemic Inflammatory Response Syndrome</li>
+            <li><strong>qSOFA/SOFA</strong>: Quick/Sequential Organ Failure Assessment</li>
+            <li><strong>Lead-time</strong>: Time between first high-risk alert and sepsis onset</li>
+          </ul>
+          <h3>Libraries</h3>
+          <ul>
+            <li><strong>FastAPI</strong>: Python web framework for APIs</li>
+            <li><strong>Streamlit</strong>: Data app framework for Python</li>
+            <li><strong>PyTorch</strong>: Deep learning framework</li>
+            <li><strong>SHAP/LIME/Captum</strong>: Model explainability toolkits</li>
+          </ul>
+          <h3>Key Commands (copyable)</h3>
+          <pre><code data-lang="bash"># Complete system
+docker-compose up -d
+
+# Dev: API + Dashboard (local)
+python api_service.py
+streamlit run dashboard_real.py
+
+# Build individual images
+docker build --target production -t sepsis-api .
+docker build --target dashboard -t sepsis-dashboard .
+</code></pre>
+        </div>
+      </details>
+    </section>
     <section id="impact" class="section doc-section">
       <details open>
-        <summary>13) Novelty & Societal Impact</summary>
+        <summary>16) Novelty & Societal Impact</summary>
         <div class="content">
           <h3>What makes this project novel</h3>
           <ul>
@@ -702,7 +687,7 @@ if project_root not in sys.path:
     </section>
     <section id="perf-ops" class="section doc-section">
       <details open>
-        <summary>14) Performance & Ops Tuning</summary>
+        <summary>17) Performance & Ops Tuning</summary>
         <div class="content">
           <h3>API (FastAPI/Uvicorn)</h3>
           <ul>
@@ -729,9 +714,62 @@ if project_root not in sys.path:
         </div>
       </details>
     </section>
+    <section id="runbook" class="section doc-section">
+      <details open>
+        <summary>18) Deployment Runbook</summary>
+        <div class="content">
+          <h3>Smoke test (local)</h3>
+          <pre><code data-lang="bash"># API
+python -m uvicorn api_service:app --host 0.0.0.0 --port 8000 --reload
+# Dashboard
+streamlit run dashboard_real.py
+# Check
+# http://localhost:8000/health  -> { status: "healthy" }
+# http://localhost:8501        -> dashboard loads
+</code></pre>
+          <h3>Compose quickstart</h3>
+          <pre><code data-lang="bash">docker-compose up -d
+# If ports busy, change host mappings (e.g., 8001:8000, 8502:8501)</code></pre>
+          <h3>Common failures</h3>
+          <ul>
+            <li><strong>Dataset.csv missing</strong>: Dashboard warns and uses sample data; add the file for real-data views.</li>
+            <li><strong>Healthcheck failing</strong>: Open <code>/health</code>; inspect container logs; confirm port mapping.</li>
+            <li><strong>Import path errors</strong>: Apply portability snippet to remove hardcoded <code>project_root</code>.</li>
+            <li><strong>Docker build errors</strong>: Remove/adjust COPY of missing dirs (<code>utils/</code>, <code>models/</code>) or point to <code>explainability_utils/</code>.</li>
+          </ul>
+          <h3>Disable optional services</h3>
+          <pre><code data-lang="yaml"># In docker-compose.yml, comment out services you don't need
+# redis:
+# postgres:
+# nginx:
+</code></pre>
+          <h3>Operational checks</h3>
+          <ul>
+            <li>Logs rotating and not filling disk; log level appropriate.</li>
+            <li>API returns 200 on <code>/health</code> and <code>/models/status</code>.</li>
+            <li>Dashboard tabs load without long blocking operations.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+    <section id="faq" class="section doc-section">
+      <details open>
+        <summary>19) FAQ</summary>
+        <div class="content">
+          <h3>Common questions</h3>
+          <ul>
+            <li><strong>Can it run without Dataset.csv?</strong><br>Yes. The dashboard falls back to realistic sample data. Real data unlocks richer views.</li>
+            <li><strong>Use API only?</strong><br>Build/run the <code>production</code> Docker target or start Uvicorn locally; interact via <code>/docs</code>.</li>
+            <li><strong>Change risk thresholds globally?</strong><br>Use the dashboard sliders for demo; in production, persist thresholds in config and read in both API and UI.</li>
+            <li><strong>Disable optional services?</strong><br>Comment out <code>redis</code>, <code>postgres</code>, <code>nginx</code> in <code>docker-compose.yml</code>.</li>
+            <li><strong>Calibrate thresholds for my hospital?</strong><br>Evaluate ROC/PR on local validation data; choose a threshold meeting desired specificity (e.g., 80%).</li>
+          </ul>
+        </div>
+      </details>
+    </section>
     <section id="professor-qa" class="section doc-section">
       <details open>
-        <summary>15) Professor Q&A</summary>
+        <summary>20) Professor Q&A</summary>
         <div class="content">
           <ul>
             <li><strong>Q: How is the 4–6 hour lead-time measured?</strong><br>A: Using time-stamped labels and predicted probabilities, we compute the time gap between first threshold-crossing and sepsis onset (see <code>explainability_utils/metrics.py</code> for lead-time and timeliness).</li>
@@ -744,739 +782,13 @@ if project_root not in sys.path:
             <li><strong>Q: What are deployment prerequisites?</strong><br>A: Container runtime, secure network, PHI governance, and EHR integration. Start in shadow mode; collect feedback; then graduate to alerts.</li>
             <li><strong>Q: What about data shift across hospitals?</strong><br>A: Monitor drift, recalibrate periodically, and retrain with local data if performance drops.</li>
             <li><strong>Q: What is the main novelty?</strong><br>A: End-to-end, clinician-centered integration with dynamic explainability and a clear path from demo to deployable microservice.</li>
-            <li><strong>Q: Why are the model performance metrics (AUPRC ~0.13–0.14) relatively modest?</strong><br>A: With a 2.17% positive rate (severe class imbalance), AUPRC ~0.13–0.14 is modest but expected. The models show good calibration (Brier ~0.11), meaning probabilities are reliable. The bottleneck is discrimination (ranking/separation), not calibration. Improvement requires better data sampling, loss function tuning, feature engineering, and hyperparameter optimization. See the "Model Quality Assessment" section for detailed recommendations.</li>
-            <li><strong>Q: Can it run without Dataset.csv?</strong><br>A: Yes. The dashboard falls back to realistic sample data. Real data unlocks richer views.</li>
-            <li><strong>Q: Can I use API only?</strong><br>A: Build/run the <code>production</code> Docker target or start Uvicorn locally; interact via <code>/docs</code>.</li>
-            <li><strong>Q: How do I change risk thresholds globally?</strong><br>A: Use the dashboard sliders for demo; in production, persist thresholds in config and read in both API and UI.</li>
-            <li><strong>Q: How do I disable optional services?</strong><br>A: Comment out <code>redis</code>, <code>postgres</code>, <code>nginx</code> in <code>docker-compose.yml</code>.</li>
-            <li><strong>Q: How do I calibrate thresholds for my hospital?</strong><br>A: Evaluate ROC/PR on local validation data; choose a threshold meeting desired specificity (e.g., 80%).</li>
           </ul>
-        </div>
-      </details>
-    </section>
-    <section id="panel-review" class="section doc-section">
-      <details open>
-        <summary>16) Panel Review Guide</summary>
-        <div class="content">
-          <h2>Evaluation Rubrics & Project Alignment</h2>
-          <p>This section maps the project deliverables to the evaluation rubrics, demonstrating how the Sepsis Digital Twin project addresses each criterion.</p>
-          
-          <h3>1. Result – 10 Marks</h3>
-          <p><strong>What this measures</strong>: Technical achievement, model performance, validation rigor, and reproducibility.</p>
-          <h4>Project Deliverables</h4>
-          <ul>
-            <li><strong>Deep Learning Models</strong>: Four architectures (GRU-D, LSTM, CNN-LSTM, Transformer) trained on real ICU data with patient-level splits (70/15/15) to prevent temporal leakage.</li>
-            <li><strong>Model Performance</strong>:
-              <ul>
-                <li>Validation: GRU-D (AUPRC 0.2079, AUROC 0.5537), LSTM (AUPRC 0.1371, AUROC 0.5424), CNN-LSTM (AUPRC 0.1883, AUROC 0.5487), Transformer (AUPRC 0.1471, AUROC 0.5263)</li>
-                <li>Test: All models calibrated with Brier scores ~0.11 (excellent calibration), AUPRC ~0.13–0.14 (modest discrimination, expected given 2.17% positive rate)</li>
-                <li>Ensemble predictions from 3 seeds per architecture for robustness</li>
-              </ul>
-            </li>
-            <li><strong>Evaluation Metrics</strong>: Comprehensive metrics including AUROC, AUPRC, F1, Recall@0.85, Brier score, Sensitivity@Specificity, Lead Time, and Timeliness Score</li>
-            <li><strong>Reproducibility</strong>: Fixed seeds, saved patient splits, persistent preprocessing artifacts (imputer/scaler), model configs, thresholds, and calibration parameters</li>
-            <li><strong>Validation Rigor</strong>: Patient-level splits prevent data leakage; early stopping on validation AUPRC; probability calibration on validation set; threshold selection at Recall≈0.85</li>
-            <li><strong>Artifacts</strong>: All models, configs, thresholds, and calibration parameters saved to <code>outputs/models/</code>; results saved to <code>outputs/results/</code></li>
-          </ul>
-          <h4>Key Evidence</h4>
-          <ul>
-            <li>Results documented in <code>outputs/results/model_comparison.csv</code> and <code>outputs/results/test_set_model_comparison.csv</code></li>
-            <li>Training logs available in <code>outputs/logs/</code></li>
-            <li>Model artifacts: <code>outputs/models/{model_name}_seed{seed}.pt</code>, <code>config.json</code>, <code>threshold_r85.json</code>, <code>calibrator.joblib</code></li>
-            <li>Reproducible training command: <code>python train_models.py --data_path Dataset.csv --models all --epochs 60 --batch_size 128 --learning_rate 1e-3 --sequence_length 48 --prediction_horizon 6 --step_size 1 --num_seeds 3 --seed 42 --loss_function BCE --label_smoothing 0.05</code></li>
-          </ul>
-          
-          <h3>2. Novelty – 5 Marks</h3>
-          <p><strong>What this measures</strong>: Innovation, uniqueness, contribution to the field, and novel approaches.</p>
-          <h4>Project Deliverables</h4>
-          <ul>
-            <li><strong>End-to-End Integration</strong>: First-of-its-kind integration of classical ML, deep learning (4 architectures), explainability (SHAP/LIME/Captum), clinical scores (SIRS/qSOFA/SOFA), and a production-ready dashboard in a single system</li>
-            <li><strong>Dynamic Explainability</strong>: Time-evolving feature importance (explainability-over-time) that justifies alerts longitudinally, not just at a single point in time. This enables clinicians to understand how risk factors evolve over 24–48 hours</li>
-            <li><strong>Clinician-Centered UX</strong>: Real-time threshold tuning with live sensitivity/specificity feedback, narrative explanations that bridge AI and clinical reasoning, and actionable recommendations</li>
-            <li><strong>Multi-Model Ensemble</strong>: Ensemble of 7 models (3 baseline + 4 DL) with ensemble averaging and uncertainty quantification</li>
-            <li><strong>Production-Ready Architecture</strong>: Dockerized microservice architecture with FastAPI backend and Streamlit frontend, clear separation of concerns, and deployment-ready configuration</li>
-            <li><strong>Clinical Scoring Integration</strong>: Automated calculation of SIRS, qSOFA, and SOFA scores alongside ML predictions, providing both rule-based and data-driven risk assessment</li>
-            <li><strong>Fairness & Equity Focus</strong>: Built-in fairness tab that surfaces subgroup performance differences (age, gender) and encourages bias monitoring</li>
-          </ul>
-          <h4>Key Evidence</h4>
-          <ul>
-            <li>Novelty section in documentation (Section 13: "Novelty & Societal Impact")</li>
-            <li>Dynamic explainability implementation: <code>explainability_utils/explainability.py</code> → <code>get_dynamic_explainability()</code></li>
-            <li>Multi-architecture ensemble: <code>integration_real.py</code> → <code>get_comprehensive_prediction()</code></li>
-            <li>Clinical workflow integration: Dashboard tabs for "Clinical Workflow" and "Fairness"</li>
-          </ul>
-          
-          <h3>3. Objectives Met – 5 Marks</h3>
-          <p><strong>What this measures</strong>: Clear project objectives, measurable goals, and evidence of achieving stated objectives.</p>
-          <h4>Project Objectives</h4>
-          <ol>
-            <li><strong>Early Sepsis Prediction</strong>: ✅ Achieved
-              <ul>
-                <li>Goal: Predict sepsis risk 4–6 hours before onset</li>
-                <li>Evidence: <code>prediction_horizon=6</code> hours in training configuration; Lead Time and Timeliness Score metrics implemented</li>
-              </ul>
-            </li>
-            <li><strong>Multi-Model Ensemble</strong>: ✅ Achieved
-              <ul>
-                <li>Goal: Integrate classical ML and deep learning models</li>
-                <li>Evidence: 7 models (Logistic Regression, Random Forest, XGBoost, GRU-D, LSTM, CNN-LSTM, Transformer) integrated in <code>integration_real.py</code></li>
-              </ul>
-            </li>
-            <li><strong>Explainability & Interpretability</strong>: ✅ Achieved
-              <ul>
-                <li>Goal: Provide SHAP/LIME/Captum explanations and clinical narratives</li>
-                <li>Evidence: <code>explainability_utils/explainability.py</code> implements all three methods; Dashboard "Explainability" and "Dynamic Explainability" tabs</li>
-              </ul>
-            </li>
-            <li><strong>Production-Ready System</strong>: ✅ Achieved
-              <ul>
-                <li>Goal: Deployable microservice with API and dashboard</li>
-                <li>Evidence: FastAPI backend (<code>api_service.py</code>), Streamlit dashboard (<code>dashboard_real.py</code>), Dockerized deployment (<code>Dockerfile</code>, <code>docker-compose.yml</code>)</li>
-              </ul>
-            </li>
-            <li><strong>Clinical Integration</strong>: ✅ Achieved
-              <ul>
-                <li>Goal: Integrate clinical scores (SIRS/qSOFA/SOFA) and provide actionable recommendations</li>
-                <li>Evidence: Clinical scores computed in <code>integration_real.py</code>; Dashboard "Clinical Workflow" tab with recommendations</li>
-              </ul>
-            </li>
-            <li><strong>Comprehensive Evaluation</strong>: ✅ Achieved
-              <ul>
-                <li>Goal: Rigorous evaluation with multiple metrics and validation</li>
-                <li>Evidence: Patient-level splits, early stopping, calibration, threshold selection; metrics in <code>explainability_utils/metrics.py</code></li>
-              </ul>
-            </li>
-          </ol>
-          <h4>Key Evidence</h4>
-          <ul>
-            <li>Project objectives documented in Section 1: "Project Overview"</li>
-            <li>All objectives have corresponding implementations and evidence</li>
-            <li>Measurable outcomes: model performance metrics, deployment artifacts, documentation</li>
-          </ul>
-          
-          <h3>4. Application – 5 Marks</h3>
-          <p><strong>What this measures</strong>: Real-world applicability, clinical relevance, deployment readiness, and practical utility.</p>
-          <h4>Project Deliverables</h4>
-          <ul>
-            <li><strong>Real Dataset</strong>: Trained on real ICU data (MIMIC-III derived) with 546,123 records from 14,057 patients, 44 features, 2.17% positive rate</li>
-            <li><strong>Clinical Relevance</strong>: 
-              <ul>
-                <li>Predicts sepsis 4–6 hours before onset (clinically actionable lead time)</li>
-                <li>Integrates established clinical scores (SIRS/qSOFA/SOFA) with ML predictions</li>
-                <li>Provides actionable recommendations (e.g., "Close monitoring recommended", "Repeat laboratory tests in 2-4 hours")</li>
-                <li>Explains predictions using clinical narratives and feature importance</li>
-              </ul>
-            </li>
-            <li><strong>Deployment Readiness</strong>:
-              <ul>
-                <li>Dockerized microservice architecture (multi-stage Dockerfile)</li>
-                <li>Docker Compose orchestration for complete system</li>
-                <li>RESTful API with comprehensive endpoints (predict, batch, explain, clinical-scores, compare)</li>
-                <li>Interactive dashboard with 9+ tabs for different use cases</li>
-                <li>Health checks, logging, and error handling</li>
-              </ul>
-            </li>
-            <li><strong>Practical Utility</strong>:
-              <ul>
-                <li>Real-time prediction API for EHR integration</li>
-                <li>Interactive dashboard for bedside review</li>
-                <li>Batch prediction support for retrospective analysis</li>
-                <li>Export capabilities (CSV, JSON) for reporting</li>
-                <li>Fairness analysis for bias monitoring</li>
-              </ul>
-            </li>
-            <li><strong>Workflow Integration</strong>:
-              <ul>
-                <li>API can be integrated into EHR systems via REST endpoints</li>
-                <li>Dashboard suitable for standalone clinical decision support</li>
-                <li>Shadow mode monitoring capability (log predictions without alerts)</li>
-                <li>Threshold tuning for site-specific calibration</li>
-              </ul>
-            </li>
-          </ul>
-          <h4>Key Evidence</h4>
-          <ul>
-            <li>Real data training: <code>Dataset.csv</code> with 546,123 records</li>
-            <li>Deployment artifacts: <code>Dockerfile</code>, <code>docker-compose.yml</code>, <code>start.sh</code></li>
-            <li>API documentation: <code>http://localhost:8000/docs</code> (FastAPI interactive docs)</li>
-            <li>Clinical integration: Section 13: "Novelty & Societal Impact" → "Clinical and societal benefits"</li>
-            <li>Deployment guide: Section 8: "Deployment Guide"</li>
-          </ul>
-          
-          <h3>5. Presentation – 10 Marks</h3>
-          <p><strong>What this measures</strong>: Documentation quality, code organization, clarity, visualizations, and communication effectiveness.</p>
-          <h4>Project Deliverables</h4>
-          <ul>
-            <li><strong>Comprehensive Documentation</strong>:
-              <ul>
-                <li>Single-file HTML documentation (<code>PROJECT_DOCUMENTATION.html</code>) with 22 sections, search functionality, and beginner-friendly explanations</li>
-                <li>Enhanced README (<code>ENHANCED_README.md</code>) with setup, usage, and architecture overview</li>
-                <li>Final summary (<code>FINAL_SUMMARY.md</code>) with project highlights</li>
-                <li>Code comments and docstrings throughout</li>
-              </ul>
-            </li>
-            <li><strong>Code Organization</strong>:
-              <ul>
-                <li>Modular structure: <code>explainability_utils/</code>, <code>models/</code>, root-level scripts</li>
-                <li>Clear separation: API (<code>api_service.py</code>), Dashboard (<code>dashboard_real.py</code>), Integration (<code>integration_real.py</code>)</li>
-                <li>Consistent naming conventions and type hints</li>
-                <li>Well-organized output directories: <code>outputs/models/</code>, <code>outputs/results/</code>, <code>outputs/logs/</code>, <code>outputs/figures/</code></li>
-              </ul>
-            </li>
-            <li><strong>Visualizations</strong>:
-              <ul>
-                <li>Interactive dashboard with Plotly charts (risk trajectories, feature importance, ROC/PR curves)</li>
-                <li>System architecture diagrams (SVG) in documentation</li>
-                <li>Data flow pipeline diagrams</li>
-                <li>Training curves and performance metrics visualization</li>
-              </ul>
-            </li>
-            <li><strong>Clarity & Communication</strong>:
-              <ul>
-                <li>Beginner-friendly explanations with glossary</li>
-                <li>Step-by-step quick start guide</li>
-                <li>FAQ section addressing common questions</li>
-                <li>Professor Q&A section anticipating panel questions</li>
-                <li>Demo script for 2-minute presentation</li>
-                <li>Troubleshooting section with solutions</li>
-              </ul>
-            </li>
-            <li><strong>Presentation Materials</strong>:
-              <ul>
-                <li>Demo script: Section 11: "Demo & Review Preparation"</li>
-                <li>Talking points for clinical impact, trust, and engineering</li>
-                <li>Visual gallery with system architecture and data flow diagrams</li>
-                <li>Results summary with key metrics highlighted</li>
-              </ul>
-            </li>
-          </ul>
-          <h4>Key Evidence</h4>
-          <ul>
-            <li>Documentation: <code>PROJECT_DOCUMENTATION.html</code> (973 lines, 22 sections)</li>
-            <li>Code structure: Modular files with clear responsibilities</li>
-            <li>Dashboard: <code>dashboard_real.py</code> with 9+ tabs, interactive visualizations</li>
-            <li>API docs: FastAPI auto-generated interactive documentation</li>
-            <li>Visual gallery: Section 18: "Visual Gallery" with SVG diagrams</li>
-          </ul>
-          
-          <h3>6. Standards/Tools – 5 Marks</h3>
-          <p><strong>What this measures</strong>: Use of industry-standard tools, best practices, code quality, and technical sophistication.</p>
-          <h4>Project Deliverables</h4>
-          <ul>
-            <li><strong>Industry-Standard Tools</strong>:
-              <ul>
-                <li><strong>Backend</strong>: FastAPI (modern Python web framework), Uvicorn (ASGI server)</li>
-                <li><strong>Frontend</strong>: Streamlit (interactive data apps)</li>
-                <li><strong>ML/DL</strong>: PyTorch (deep learning), scikit-learn (classical ML), NumPy, pandas</li>
-                <li><strong>Explainability</strong>: SHAP, LIME, Captum (state-of-the-art explainability libraries)</li>
-                <li><strong>Visualization</strong>: Plotly (interactive charts), Matplotlib, Seaborn</li>
-                <li><strong>Deployment</strong>: Docker, Docker Compose (containerization)</li>
-                <li><strong>Version Control</strong>: Git (implied by .gitignore)</li>
-              </ul>
-            </li>
-            <li><strong>Best Practices</strong>:
-              <ul>
-                <li><strong>Code Quality</strong>: Type hints, docstrings, modular design, error handling</li>
-                <li><strong>ML Best Practices</strong>: Patient-level splits, early stopping, learning rate scheduling, gradient clipping, probability calibration, ensemble methods</li>
-                <li><strong>Reproducibility</strong>: Fixed seeds, saved configs, persistent artifacts, version logging</li>
-                <li><strong>API Design</strong>: RESTful endpoints, Pydantic models for validation, async/await for performance, background tasks for logging</li>
-                <li><strong>DevOps</strong>: Multi-stage Dockerfile, Docker Compose orchestration, health checks, environment variables</li>
-              </ul>
-            </li>
-            <li><strong>Technical Sophistication</strong>:
-              <ul>
-                <li><strong>Deep Learning</strong>: Four architectures (GRU-D, LSTM, CNN-LSTM, Transformer) with state-of-the-art techniques (attention, dropout, batch normalization)</li>
-                <li><strong>Mixed Precision Training</strong>: AMP (Automatic Mixed Precision) for CUDA devices</li>
-                <li><strong>Advanced Loss Functions</strong>: Focal Loss, Label Smoothing, BCEWithLogitsLoss with pos_weight</li>
-                <li><strong>Probability Calibration</strong>: Platt Scaling (Logistic Regression) and Temperature Scaling</li>
-                <li><strong>Sequence Modeling</strong>: Sliding window approach, delta_t computation for GRU-D, masking for variable-length sequences</li>
-                <li><strong>MPS Compatibility</strong>: Explicit handling of Apple Silicon GPU limitations (float32, manual masking)</li>
-              </ul>
-            </li>
-            <li><strong>Standards Compliance</strong>:
-              <ul>
-                <li><strong>API Standards</strong>: RESTful design, OpenAPI/Swagger documentation (FastAPI auto-generates)</li>
-                <li><strong>Data Formats</strong>: JSON for API, CSV for data, JSONL for logs</li>
-                <li><strong>Containerization</strong>: OCI-compliant Docker images, Docker Compose v3.8</li>
-                <li><strong>Code Organization</strong>: PEP 8 style (implied by consistent formatting), modular structure</li>
-              </ul>
-            </li>
-          </ul>
-          <h4>Key Evidence</h4>
-          <ul>
-            <li>Requirements file: <code>requirements.txt</code> with all dependencies and versions</li>
-            <li>Dockerfile: Multi-stage build with best practices (<code>Dockerfile</code>)</li>
-            <li>Code structure: Modular, well-organized, type-hinted code</li>
-            <li>ML pipeline: Comprehensive training script with all best practices (<code>train_models.py</code>)</li>
-            <li>API documentation: Auto-generated OpenAPI docs at <code>/docs</code></li>
-            <li>Standards section: Section 9: "Security & Performance Notes"</li>
-          </ul>
-          
-          <h3>Summary Score Breakdown</h3>
-          <div class="callout">
-            <p><strong>Total Possible: 40 Marks</strong></p>
-            <ul>
-              <li><strong>Result (10)</strong>: ✅ Comprehensive DL training, validation, evaluation, and reproducibility</li>
-              <li><strong>Novelty (5)</strong>: ✅ End-to-end integration, dynamic explainability, clinician-centered UX</li>
-              <li><strong>Objectives Met (5)</strong>: ✅ All 6 stated objectives achieved with evidence</li>
-              <li><strong>Application (5)</strong>: ✅ Real dataset, clinical relevance, deployment-ready, practical utility</li>
-              <li><strong>Presentation (10)</strong>: ✅ Comprehensive documentation, clear code, visualizations, effective communication</li>
-              <li><strong>Standards/Tools (5)</strong>: ✅ Industry-standard tools, best practices, technical sophistication</li>
-            </ul>
-          </div>
-          
-          <h3>Quick Reference for Panel</h3>
-          <ul>
-            <li><strong>Demo</strong>: See Section 11: "Demo & Review Preparation" for 2-minute demo script</li>
-            <li><strong>Results</strong>: See Section "Results — Model Performance" for validation and test metrics</li>
-            <li><strong>Novelty</strong>: See Section 13: "Novelty & Societal Impact" for innovation highlights</li>
-            <li><strong>Code</strong>: See Section 4: "Folder and File Map" and Section 5: "Key Modules / Components"</li>
-            <li><strong>Deployment</strong>: See Section 8: "Deployment Guide" for Docker setup</li>
-            <li><strong>Questions</strong>: See Section 15: "Professor Q&A" for anticipated questions and answers</li>
-          </ul>
-        </div>
-      </details>
-    </section>
-    <section id="individual-questions" class="section doc-section">
-      <details open>
-        <summary>17) Individual Questions</summary>
-        <div class="content">
-          <h2>Individual Questions by Team Role</h2>
-          <p>This section contains anticipated questions from the reviewing panel organized by team member role. Each person has 10 questions covering their specific contributions to the project.</p>
-          
-          <h3>Person A: Data Preprocessing</h3>
-          <div class="callout">
-            <p><strong>Role</strong>: Responsible for data preprocessing, cleaning, feature engineering, and data quality assurance.</p>
-          </div>
-          
-          <ol>
-            <li><strong>Q: What was your approach to handling missing values in the ICU dataset?</strong><br>
-            <strong>A:</strong> I implemented a comprehensive missing value handling strategy using <code>SimpleImputer</code> from scikit-learn. The imputer was fitted only on the training set (to prevent data leakage) using the mean strategy for numerical features. Missing values were imputed with the mean of each feature computed from the training data. The fitted imputer was saved to <code>outputs/cache/imputer.joblib</code> for consistency across train/val/test splits. This ensures that validation and test sets use the same imputation parameters as the training set, maintaining data integrity.</li>
-            
-            <li><strong>Q: How did you handle feature scaling and normalization?</strong><br>
-            <strong>A:</strong> I used <code>StandardScaler</code> from scikit-learn to standardize all numerical features. The scaler was fitted only on the training set, computing the mean and standard deviation for each feature. The fitted scaler was saved to <code>outputs/cache/scaler.joblib</code> and applied to validation and test sets using the same parameters. This ensures that all features are on the same scale (mean=0, std=1), which is crucial for deep learning models and prevents features with larger magnitudes from dominating the learning process.</li>
-            
-            <li><strong>Q: What was your strategy for patient-level data splitting?</strong><br>
-            <strong>A:</strong> I implemented patient-level splitting (70/15/15 train/val/test) to prevent temporal leakage. This ensures that all records from a single patient belong to only one split. The patient IDs were shuffled using a fixed random seed (42) for reproducibility, then split proportionally. The splits were cached to <code>outputs/cache/patient_splits_seed{seed}.json</code> to ensure consistency across multiple training runs. This approach prevents information leakage where a patient's future data might appear in the training set while their past data is in the validation set.</li>
-            
-            <li><strong>Q: How did you create sequences for time-series modeling?</strong><br>
-            <strong>A:</strong> I implemented a sliding window approach to create sequences from the time-series data. For each patient, I generated sequences of length <code>sequence_length</code> (48 hours) with a step size of <code>step_size</code> (1 hour) and a prediction horizon of <code>prediction_horizon</code> (6 hours). The sequences capture the last 24-48 hours of patient data before the prediction point. For GRU-D, I also computed <code>delta_t</code> (time since last observation) for each feature, which is essential for the decay mechanism in GRU-D. The sequences are created with proper masking to handle variable-length sequences and missing observations.</li>
-            
-            <li><strong>Q: What features did you engineer or create for the models?</strong><br>
-            <strong>A:</strong> I engineered several temporal and statistical features including:
-            <ul>
-              <li><strong>Rolling statistics</strong>: <code>MAP_rolling_mean_6hr</code> (6-hour rolling mean of Mean Arterial Pressure)</li>
-              <li><strong>Delta features</strong>: <code>MAP_delta_1hr</code> (1-hour change in MAP)</li>
-              <li><strong>Clinical scores</strong>: <code>qSOFA_Resp</code>, <code>qSOFA_MAP</code>, <code>qSOFA_Score_simple</code> (quick SOFA score components)</li>
-            </ul>
-            These features capture temporal patterns and clinical indicators that help the models identify sepsis risk. The final dataset contains 44 features after preprocessing.</li>
-            
-            <li><strong>Q: How did you ensure data quality and consistency?</strong><br>
-            <strong>A:</strong> I implemented several quality assurance measures:
-            <ul>
-              <li><strong>Data validation</strong>: Checked for duplicate records, inconsistent patient IDs, and temporal ordering</li>
-              <li><strong>Reproducibility</strong>: Fixed random seeds for all random operations (splitting, shuffling)</li>
-              <li><strong>Artifact persistence</strong>: Saved imputer, scaler, and patient splits to ensure consistency across runs</li>
-              <li><strong>Data integrity</strong>: Verified that preprocessing artifacts are fitted only on training data and applied consistently</li>
-              <li><strong>Version control</strong>: Logged dataset versions, preprocessing parameters, and feature names</li>
-            </ul>
-            All preprocessing artifacts are saved to <code>outputs/cache/</code> for reproducibility.</li>
-            
-            <li><strong>Q: What was the final dataset size and class distribution?</strong><br>
-            <strong>A:</strong> The final preprocessed dataset contains:
-            <ul>
-              <li><strong>Total records</strong>: 546,123 rows</li>
-              <li><strong>Unique patients</strong>: 14,057 patients</li>
-              <li><strong>Features</strong>: 44 features (after preprocessing and feature engineering)</li>
-              <li><strong>Class distribution</strong>: 97.83% negative (534,273 records), 2.17% positive (11,850 records)</li>
-              <li><strong>Train/Val/Test split</strong>: 70/15/15 (9,839/2,108/2,110 patients)</li>
-            </ul>
-            The severe class imbalance (2.17% positive rate) is characteristic of sepsis prediction tasks and requires careful handling during model training.</li>
-            
-            <li><strong>Q: How did you handle the temporal aspect of the ICU data?</strong><br>
-            <strong>A:</strong> I preserved the temporal structure of the data by:
-            <ul>
-              <li><strong>Time ordering</strong>: Maintained the chronological order of records using the <code>Time</code> column (renamed from <code>Hour</code>)</li>
-              <li><strong>Sequence creation</strong>: Generated sequences that capture temporal patterns leading up to sepsis onset</li>
-              <li><strong>Delta_t computation</strong>: For GRU-D, computed time since last observation for decay mechanisms</li>
-              <li><strong>Prediction horizon</strong>: Ensured sequences predict sepsis 6 hours ahead (4-6 hour lead time)</li>
-              <li><strong>Window sliding</strong>: Used sliding windows with step size 1 hour to maximize positive sample density</li>
-            </ul>
-            This temporal structure is essential for deep learning models that capture time-dependent patterns.</li>
-            
-            <li><strong>Q: What challenges did you face during data preprocessing?</strong><br>
-            <strong>A:</strong> Key challenges included:
-            <ul>
-              <li><strong>Missing values</strong>: High missingness rates in some features, requiring careful imputation strategy</li>
-              <li><strong>Class imbalance</strong>: Only 2.17% positive cases, requiring sampling strategies during sequence creation</li>
-              <li><strong>Temporal leakage</strong>: Ensuring patient-level splits to prevent future information from leaking into training</li>
-              <li><strong>Feature scaling</strong>: Ensuring consistent scaling across train/val/test without data leakage</li>
-              <li><strong>Sequence generation</strong>: Efficiently creating millions of sequences with proper masking and delta_t computation</li>
-              <li><strong>Memory management</strong>: Handling large datasets (546K+ records) efficiently during preprocessing</li>
-            </ul>
-            These challenges were addressed through careful design of the preprocessing pipeline and artifact persistence.</li>
-            
-            <li><strong>Q: How can someone reproduce your data preprocessing steps?</strong><br>
-            <strong>A:</strong> The preprocessing pipeline is fully reproducible:
-            <ul>
-              <li><strong>Code</strong>: All preprocessing logic is in <code>explainability_utils/data_loader.py</code></li>
-              <li><strong>Functions</strong>: <code>create_patient_splits()</code>, <code>fit_and_save_imputer_scaler()</code>, <code>apply_imputation_and_scaling()</code></li>
-              <li><strong>Artifacts</strong>: Saved imputer (<code>outputs/cache/imputer.joblib</code>), scaler (<code>outputs/cache/scaler.joblib</code>), patient splits (<code>outputs/cache/patient_splits_seed{seed}.json</code>)</li>
-              <li><strong>Reproducibility</strong>: Fixed random seed (42) ensures identical splits across runs</li>
-              <li><strong>Documentation</strong>: See Section 4: "Folder and File Map" and Section 5: "Key Modules / Components" for detailed code references</li>
-            </ul>
-            Running <code>python train_models.py</code> automatically performs all preprocessing steps and saves artifacts.</li>
-          </ol>
-          
-          <h3>Person B: Baseline Models</h3>
-          <div class="callout">
-            <p><strong>Role</strong>: Responsible for baseline models (Logistic Regression, Random Forest, XGBoost) and clinical scoring (SIRS, qSOFA, SOFA).</p>
-          </div>
-          
-          <ol>
-            <li><strong>Q: What baseline models did you implement and why?</strong><br>
-            <strong>A:</strong> I implemented three baseline models:
-            <ul>
-              <li><strong>Logistic Regression</strong>: Linear baseline that provides interpretable coefficients and fast inference</li>
-              <li><strong>Random Forest</strong>: Ensemble method that captures non-linear patterns and feature interactions</li>
-              <li><strong>XGBoost</strong>: Gradient boosting method that often performs well on tabular data and handles class imbalance</li>
-            </ul>
-            These models serve as baselines to compare against deep learning models and provide interpretable predictions. They are integrated in <code>integration_real.py</code> and can be loaded from saved checkpoints or trained on-demand.</li>
-            
-            <li><strong>Q: How did you implement the clinical scoring systems (SIRS, qSOFA, SOFA)?</strong><br>
-            <strong>A:</strong> I implemented clinical scoring systems according to established medical guidelines:
-            <ul>
-              <li><strong>SIRS (Systemic Inflammatory Response Syndrome)</strong>: Checks for temperature, heart rate, respiratory rate, and WBC abnormalities</li>
-              <li><strong>qSOFA (Quick Sequential Organ Failure Assessment)</strong>: Simplified version of SOFA using only 3 variables (altered mental status, respiratory rate ≥22, systolic BP ≤100)</li>
-              <li><strong>SOFA (Sequential Organ Failure Assessment)</strong>: Comprehensive scoring system evaluating 6 organ systems (respiratory, coagulation, liver, cardiovascular, CNS, renal)</li>
-            </ul>
-            These scores are computed in <code>integration_real.py</code> using the <code>calculate_clinical_scores()</code> method and provide rule-based risk assessment alongside ML predictions.</li>
-            
-            <li><strong>Q: How do your baseline models compare to the deep learning models?</strong><br>
-            <strong>A:</strong> The baseline models provide:
-            <ul>
-              <li><strong>Interpretability</strong>: Logistic Regression coefficients and Random Forest feature importance are directly interpretable</li>
-              <li><strong>Speed</strong>: Much faster inference than deep learning models (milliseconds vs seconds)</li>
-              <li><strong>Baseline performance</strong>: Establish a performance floor for comparison</li>
-              <li><strong>Ensemble diversity</strong>: Different modeling approaches (linear, tree-based, gradient boosting) add diversity to the ensemble</li>
-            </ul>
-            Deep learning models (Person C) capture temporal patterns and complex non-linear relationships, while baseline models provide fast, interpretable predictions. The ensemble combines both approaches for robustness.</li>
-            
-            <li><strong>Q: How did you handle class imbalance in your baseline models?</strong><br>
-            <strong>A:</strong> I handled class imbalance through several strategies:
-            <ul>
-              <li><strong>Class weights</strong>: Used <code>class_weight='balanced'</code> in Logistic Regression and Random Forest to automatically adjust for class imbalance</li>
-              <li><strong>XGBoost parameters</strong>: Set <code>scale_pos_weight</code> parameter based on the ratio of negative to positive samples</li>
-              <li><strong>Threshold tuning</strong>: Adjusted decision thresholds to optimize for recall or precision based on clinical needs</li>
-              <li><strong>Evaluation metrics</strong>: Focused on AUPRC and AUROC rather than accuracy, which are more appropriate for imbalanced datasets</li>
-            </ul>
-            These strategies ensure that baseline models don't simply predict the majority class.</li>
-            
-            <li><strong>Q: What features are most important according to your baseline models?</strong><br>
-            <strong>A:</strong> Based on feature importance analysis from Random Forest and XGBoost:
-            <ul>
-              <li><strong>Vital signs</strong>: Heart rate, Mean Arterial Pressure (MAP), Respiratory Rate, Temperature</li>
-              <li><strong>Lab values</strong>: Lactate, WBC (White Blood Cell count), Creatinine, Bilirubin</li>
-              <li><strong>Clinical scores</strong>: qSOFA score, SOFA score components</li>
-              <li><strong>Temporal features</strong>: MAP_rolling_mean_6hr, MAP_delta_1hr (engineered by Person A)</li>
-            </ul>
-            These align with clinical understanding of sepsis indicators, validating that the models capture clinically relevant patterns. Feature importance is available through the explainability module (Person D).</li>
-            
-            <li><strong>Q: How are your clinical scores integrated into the prediction pipeline?</strong><br>
-            <strong>A:</strong> Clinical scores are integrated in the <code>SepsisPredictionIntegration</code> class:
-            <ul>
-              <li><strong>Computation</strong>: Scores are calculated in real-time from patient data using <code>calculate_clinical_scores()</code></li>
-              <li><strong>API endpoint</strong>: Available via <code>POST /clinical-scores</code> in the FastAPI service</li>
-              <li><strong>Dashboard display</strong>: Shown in the "Clinical Workflow" tab alongside ML predictions</li>
-              <li><strong>Risk assessment</strong>: Used to provide context and validate ML predictions</li>
-              <li><strong>Recommendations</strong>: Combined with ML predictions to generate actionable clinical recommendations</li>
-            </ul>
-            This integration provides both rule-based and data-driven risk assessment, giving clinicians multiple perspectives on patient risk.</li>
-            
-            <li><strong>Q: How did you validate your baseline models?</strong><br>
-            <strong>A:</strong> Baseline models were validated using:
-            <ul>
-              <li><strong>Patient-level splits</strong>: Same 70/15/15 train/val/test splits as deep learning models (from Person A)</li>
-              <li><strong>Cross-validation</strong>: Optional k-fold cross-validation for hyperparameter tuning</li>
-              <li><strong>Metrics</strong>: AUROC, AUPRC, F1, Precision, Recall, Brier score</li>
-              <li><strong>Threshold optimization</strong>: Threshold selection to achieve target recall (e.g., 0.85)</li>
-              <li><strong>Comparison</strong>: Performance compared against deep learning models and clinical scores</li>
-            </ul>
-            Validation results are saved to <code>outputs/results/</code> for comparison with deep learning models.</li>
-            
-            <li><strong>Q: What are the advantages of using baseline models alongside deep learning?</strong><br>
-            <strong>A:</strong> Baseline models provide several advantages:
-            <ul>
-              <li><strong>Interpretability</strong>: Easy to understand and explain to clinicians</li>
-              <li><strong>Speed</strong>: Fast inference suitable for real-time applications</li>
-              <li><strong>Robustness</strong>: Different modeling paradigms reduce ensemble risk</li>
-              <li><strong>Baseline comparison</strong>: Establish performance floor for deep learning models</li>
-              <li><strong>Clinical validation</strong>: Align with clinical understanding through feature importance</li>
-              <li><strong>Fallback</strong>: Can serve as backup if deep learning models fail</li>
-            </ul>
-            The ensemble of baseline + deep learning models provides both interpretability and predictive power.</li>
-            
-            <li><strong>Q: How do you handle missing values in your baseline models?</strong><br>
-            <strong>A:</strong> Missing values are handled using the preprocessing pipeline from Person A:
-            <ul>
-              <li><strong>Imputation</strong>: Uses the fitted <code>SimpleImputer</code> from Person A's preprocessing</li>
-              <li><strong>Consistency</strong>: Same imputation strategy applied to train/val/test sets</li>
-              <li><strong>Tree-based models</strong>: Random Forest and XGBoost can handle missing values natively, but we use imputed data for consistency</li>
-              <li><strong>Logistic Regression</strong>: Requires complete data, so imputation is essential</li>
-            </ul>
-            This ensures that baseline models and deep learning models use the same preprocessing pipeline.</li>
-            
-            <li><strong>Q: How are your baseline models deployed in the production system?</strong><br>
-            <strong>A:</strong> Baseline models are deployed through:
-            <ul>
-              <li><strong>Integration class</strong>: <code>SepsisPredictionIntegration</code> in <code>integration_real.py</code> loads and uses baseline models</li>
-              <li><strong>API endpoints</strong>: FastAPI service (<code>api_service.py</code>) exposes predictions via <code>POST /predict</code> and <code>POST /compare</code></li>
-              <li><strong>Dashboard</strong>: Streamlit dashboard (<code>dashboard_real.py</code>) displays baseline predictions in "Model Predictions" tab</li>
-              <li><strong>Ensemble</strong>: Baseline predictions are combined with deep learning predictions for final ensemble risk score</li>
-              <li><strong>Docker</strong>: All models are containerized in the Docker image for deployment</li>
-            </ul>
-            The system is designed to seamlessly integrate baseline and deep learning models for unified predictions.</li>
-          </ol>
-          
-          <h3>Person C: Deep Learning Models</h3>
-          <div class="callout">
-            <p><strong>Role</strong>: Responsible for deep learning models (GRU-D, LSTM, CNN-LSTM, Transformer) and training pipeline.</p>
-          </div>
-          
-          <ol>
-            <li><strong>Q: What deep learning architectures did you implement and why?</strong><br>
-            <strong>A:</strong> I implemented four deep learning architectures:
-            <ul>
-              <li><strong>GRU-D</strong>: Gated Recurrent Unit with Decay mechanism that explicitly models missingness patterns and time decay, ideal for irregularly sampled ICU data</li>
-              <li><strong>LSTM</strong>: Long Short-Term Memory network that captures long-term dependencies in time-series data</li>
-              <li><strong>CNN-LSTM</strong>: Convolutional Neural Network followed by LSTM that extracts local patterns before temporal modeling</li>
-              <li><strong>Transformer</strong>: Attention-based architecture that captures global dependencies and parallelizes training efficiently</li>
-            </ul>
-            Each architecture has different strengths: GRU-D handles missingness, LSTM captures temporal patterns, CNN-LSTM combines pattern recognition with sequence modeling, and Transformer provides global attention. The ensemble of all four provides robustness and diversity.</li>
-            
-            <li><strong>Q: How did you handle the class imbalance problem in training?</strong><br>
-            <strong>A:</strong> I implemented several strategies to handle the 2.17% positive rate:
-            <ul>
-              <li><strong>BCEWithLogitsLoss with pos_weight</strong>: Set <code>pos_weight = num_neg / num_pos</code> to automatically weight positive examples higher during training</li>
-              <li><strong>Focal Loss</strong>: Alternative loss function (γ=2, α≈0.25) that focuses learning on hard examples and downweights easy negatives</li>
-              <li><strong>Label Smoothing</strong>: Optional label smoothing (0.05) for Transformer to prevent overconfidence</li>
-              <li><strong>Ensemble averaging</strong>: Trained 3 seeds per architecture and averaged predictions to reduce variance</li>
-              <li><strong>Threshold optimization</strong>: Selected decision threshold to achieve Recall≈0.85 on validation set</li>
-            </ul>
-            These strategies ensure that models learn to distinguish positive cases despite the severe imbalance.</li>
-            
-            <li><strong>Q: What was your training strategy and hyperparameter configuration?</strong><br>
-            <strong>A:</strong> I implemented a comprehensive training strategy:
-            <ul>
-              <li><strong>Optimizer</strong>: AdamW with learning rate 1e-3, weight decay 1e-4</li>
-              <li><strong>Learning rate schedule</strong>: Cosine annealing with warmup (3-5 epochs) or ReduceLROnPlateau on validation AUPRC</li>
-              <li><strong>Batch size</strong>: 64-128 (optimized for memory and convergence)</li>
-              <li><strong>Gradient clipping</strong>: 1.0 to prevent exploding gradients</li>
-              <li><strong>Mixed precision</strong>: AMP (Automatic Mixed Precision) for CUDA devices to speed up training</li>
-              <li><strong>Early stopping</strong>: Stopped training if validation AUPRC didn't improve for 8 epochs</li>
-              <li><strong>Max epochs</strong>: 60 (typically converged in 20-35 epochs)</li>
-            </ul>
-            All hyperparameters are saved in <code>config.json</code> for each model for reproducibility.</li>
-            
-            <li><strong>Q: How did you implement GRU-D's decay mechanism for missing values?</strong><br>
-            <strong>A:</strong> GRU-D implements a decay mechanism that models missingness patterns:
-            <ul>
-              <li><strong>Feature decay</strong>: Missing features decay toward their mean value using exponential decay: <code>x_imputed = m_t * x_t + (1 - m_t) * (decayed_gamma_x * x_mean)</code></li>
-              <li><strong>Hidden state decay</strong>: Hidden states decay toward zero using: <code>h_decayed = decayed_gamma_h * h_t</code></li>
-              <li><strong>Delta_t computation</strong>: Time since last observation (<code>delta_t</code>) is computed for each feature and timestep</li>
-              <li><strong>Decay rates</strong>: <code>decay_gamma_x</code> and <code>decay_gamma_h</code> are learned parameters that control decay speed</li>
-            </ul>
-            This mechanism allows GRU-D to explicitly model how missing values and time gaps affect predictions, making it ideal for irregularly sampled ICU data.</li>
-            
-            <li><strong>Q: What were the final model performance metrics?</strong><br>
-            <strong>A:</strong> Final test set performance (calibrated, ensemble of 3 seeds):
-            <ul>
-              <li><strong>GRU-D</strong>: AUPRC 0.1355, AUROC 0.4970, Brier 0.1114</li>
-              <li><strong>LSTM</strong>: AUPRC 0.1353, AUROC 0.5430, Brier 0.1112</li>
-              <li><strong>CNN-LSTM</strong>: AUPRC 0.1342, AUROC 0.5412, Brier 0.1111</li>
-              <li><strong>Transformer</strong>: AUPRC 0.1423, AUROC 0.5382, Brier 0.1112</li>
-            </ul>
-            Calibration is excellent (Brier ~0.11), but discrimination is modest (AUPRC ~0.13-0.14) due to the severe class imbalance (2.17% positive rate). The models show good calibration, meaning probabilities are reliable, but need improvement in discrimination (ranking/separation).</li>
-            
-            <li><strong>Q: How did you implement probability calibration?</strong><br>
-            <strong>A:</strong> I implemented two calibration methods:
-            <ul>
-              <li><strong>Platt Scaling</strong>: Logistic regression on logits to map uncalibrated probabilities to calibrated probabilities</li>
-              <li><strong>Temperature Scaling</strong>: Single-parameter scaling (temperature) that adjusts the softmax output to improve calibration</li>
-            </ul>
-            Calibration was performed on the validation set, and calibration parameters were saved to <code>calibrator.joblib</code> for each model. The calibrated models show excellent Brier scores (~0.11), indicating that predicted probabilities match observed frequencies well.</li>
-            
-            <li><strong>Q: How did you ensure reproducibility in your training pipeline?</strong><br>
-            <strong>A:</strong> I implemented comprehensive reproducibility measures:
-            <ul>
-              <li><strong>Fixed seeds</strong>: Set random seeds for PyTorch, NumPy, and Python's random module</li>
-              <li><strong>Patient splits</strong>: Used pre-defined patient splits from Person A (saved to <code>outputs/cache/patient_splits_seed{seed}.json</code>)</li>
-              <li><strong>Model artifacts</strong>: Saved <code>state_dict</code>, <code>config.json</code>, <code>threshold_r85.json</code>, and <code>calibrator.joblib</code> for each seed</li>
-              <li><strong>Version logging</strong>: Logged package versions and training parameters</li>
-              <li><strong>Reproducible command</strong>: <code>python train_models.py --seed 42 --num_seeds 3 ...</code> produces identical results</li>
-            </ul>
-            All artifacts are saved to <code>outputs/models/</code> for reproducibility and deployment.</li>
-            
-            <li><strong>Q: What challenges did you face with MPS (Apple Silicon) compatibility?</strong><br>
-            <strong>A:</strong> I encountered several MPS-specific challenges:
-            <ul>
-              <li><strong>Float64 not supported</strong>: MPS doesn't support float64, so all tensors must be float32. Fixed by explicitly casting <code>pos_weight</code>, <code>logits</code>, and <code>targets</code> to float32.</li>
-              <li><strong>Transformer padding mask</strong>: Nested tensor ops (<code>aten::_nested_tensor_from_mask_left_aligned</code>) are not implemented on MPS. Fixed by removing <code>src_key_padding_mask</code> and implementing manual masked pooling.</li>
-              <li><strong>Mixed precision</strong>: AMP/GradScaler is only enabled for CUDA, not MPS. MPS uses standard FP32 training.</li>
-              <li><strong>Boolean tensor operations</strong>: Fixed boolean subtraction errors in GRU-D by using float casting.</li>
-            </ul>
-            All fixes are documented in the code and troubleshooting section (Section 2: "Quick Start Guide").</li>
-            
-            <li><strong>Q: How did you implement ensembling across multiple seeds?</strong><br>
-            <strong>A:</strong> I implemented ensemble averaging:
-            <ul>
-              <li><strong>Multi-seed training</strong>: Trained each architecture with 3 different random seeds (42, 43, 44)</li>
-              <li><strong>Probability averaging</strong>: Averaged raw probabilities from all 3 seeds for each architecture</li>
-              <li><strong>Calibration</strong>: Applied calibration to ensemble probabilities</li>
-              <li><strong>Threshold selection</strong>: Selected threshold on ensemble validation predictions to achieve Recall≈0.85</li>
-              <li><strong>Final metrics</strong>: Computed ensemble metrics on validation and test sets</li>
-            </ul>
-            This approach reduces variance and improves robustness compared to single-seed models. Ensemble results are saved to <code>outputs/results/model_comparison.csv</code>.</li>
-            
-            <li><strong>Q: How are your deep learning models integrated into the production system?</strong><br>
-            <strong>A:</strong> Deep learning models are integrated through:
-            <ul>
-              <li><strong>Integration class</strong>: <code>SepsisPredictionIntegration</code> in <code>integration_real.py</code> loads trained models from <code>outputs/models/</code></li>
-              <li><strong>Model loading</strong>: Loads <code>state_dict</code>, <code>config.json</code>, <code>threshold_r85.json</code>, and <code>calibrator.joblib</code> for each seed</li>
-              <li><strong>Ensemble prediction</strong>: Averages probabilities across seeds for each architecture</li>
-              <li><strong>API endpoints</strong>: FastAPI service exposes predictions via <code>POST /predict</code> and <code>POST /compare</code></li>
-              <li><strong>Dashboard</strong>: Streamlit dashboard displays predictions in "Model Predictions" tab</li>
-              <li><strong>Docker deployment</strong>: All models are containerized for production deployment</li>
-            </ul>
-            The system seamlessly integrates all 4 architectures with baseline models for unified ensemble predictions.</li>
-          </ol>
-          
-          <h3>Person D: Explainability and Dashboard</h3>
-          <div class="callout">
-            <p><strong>Role</strong>: Responsible for explainability (SHAP, LIME, Captum), interactive dashboard, and API integration.</p>
-          </div>
-          
-          <ol>
-            <li><strong>Q: What explainability methods did you implement and why?</strong><br>
-            <strong>A:</strong> I implemented three explainability methods:
-            <ul>
-              <li><strong>SHAP (SHapley Additive exPlanations)</strong>: Game-theoretic approach that provides feature contributions satisfying desirable properties (efficiency, symmetry, dummy, additivity)</li>
-              <li><strong>LIME (Local Interpretable Model-agnostic Explanations)</strong>: Local linear approximation that explains individual predictions by training interpretable models on perturbed inputs</li>
-              <li><strong>Captum</strong>: PyTorch-native explainability library that provides gradient-based, attention-based, and perturbation-based methods</li>
-            </ul>
-            These methods provide different perspectives on model decisions: SHAP provides theoretically grounded feature importance, LIME provides local interpretability, and Captum provides model-specific explanations. The combination gives clinicians multiple ways to understand and trust model predictions.</li>
-            
-            <li><strong>Q: How did you implement dynamic explainability (explainability-over-time)?</strong><br>
-            <strong>A:</strong> I implemented <code>get_dynamic_explainability()</code> in <code>explainability_utils/explainability.py</code>:
-            <ul>
-              <li><strong>Temporal feature importance</strong>: Computes feature importance for each timestep in a 24-48 hour window</li>
-              <li><strong>Heatmap visualization</strong>: Creates time-series heatmap showing how feature importance evolves over time</li>
-              <li><strong>Top features tracking</strong>: Identifies most important features at each timestep and tracks their evolution</li>
-              <li><strong>Dashboard integration</strong>: Displays in the "Dynamic Explainability" tab with interactive Plotly charts</li>
-            </ul>
-            This enables clinicians to understand how risk factors evolve longitudinally, not just at a single point in time, which is crucial for sepsis prediction where early warning signs may appear gradually.</li>
-            
-            <li><strong>Q: What features does the Streamlit dashboard provide?</strong><br>
-            <strong>A:</strong> The dashboard (<code>dashboard_real.py</code>) provides 9+ interactive tabs:
-            <ul>
-              <li><strong>Risk Overview</strong>: Overall sepsis risk score, level, and actionable recommendations</li>
-              <li><strong>Model Predictions</strong>: Individual model predictions with confidence intervals and ensemble average</li>
-              <li><strong>Risk Trajectory</strong>: Time-series plot showing risk evolution over 24-48 hours</li>
-              <li><strong>Explainability</strong>: SHAP/LIME/Captum feature importance plots and narrative explanations</li>
-              <li><strong>Dynamic Explainability</strong>: Temporal feature importance heatmap showing evolution over time</li>
-              <li><strong>Patient Data</strong>: View and edit patient data (vitals, labs, demographics)</li>
-              <li><strong>Performance</strong>: Model performance metrics (ROC, PR curves, confusion matrices)</li>
-              <li><strong>Clinical Workflow</strong>: Clinical scores (SIRS/qSOFA/SOFA) and recommendations</li>
-              <li><strong>Fairness</strong>: Subgroup performance analysis (age, gender) for bias monitoring</li>
-            </ul>
-            The dashboard provides a comprehensive interface for clinicians to interact with the sepsis prediction system.</li>
-            
-            <li><strong>Q: How did you integrate the FastAPI backend with the Streamlit dashboard?</strong><br>
-            <strong>A:</strong> I implemented a microservice architecture:
-            <ul>
-              <li><strong>FastAPI backend</strong>: <code>api_service.py</code> provides RESTful API endpoints (<code>POST /predict</code>, <code>POST /explain</code>, <code>POST /clinical-scores</code>, etc.)</li>
-              <li><strong>Streamlit dashboard</strong>: <code>dashboard_real.py</code> can call API endpoints or use local computation</li>
-              <li><strong>Integration class</strong>: <code>SepsisPredictionIntegration</code> provides unified interface for both API and dashboard</li>
-              <li><strong>Docker Compose</strong>: Orchestrates both services with proper networking and dependencies</li>
-              <li><strong>Health checks</strong>: API health endpoint (<code>GET /health</code>) for monitoring</li>
-            </ul>
-            This architecture allows the dashboard to be used standalone or connected to the API service, providing flexibility for different deployment scenarios.</li>
-            
-            <li><strong>Q: How did you generate narrative explanations for clinicians?</strong><br>
-            <strong>A:</strong> I implemented narrative generation in the explainability module:
-            <ul>
-              <li><strong>Feature importance analysis</strong>: Identifies top contributing features from SHAP/LIME/Captum</li>
-              <li><strong>Clinical interpretation</strong>: Maps feature names to clinical terms (e.g., "HR" → "Heart Rate", "MAP" → "Mean Arterial Pressure")</li>
-              <li><strong>Risk level narrative</strong>: Generates sentences like "High risk due to elevated Lactate (2.5 mmol/L) and increased Heart Rate (110 bpm)"</li>
-              <li><strong>Recommendations</strong>: Suggests actions like "Close monitoring recommended" or "Repeat laboratory tests in 2-4 hours"</li>
-              <li><strong>Dashboard display</strong>: Shows narratives in the "Explainability" and "Risk Overview" tabs</li>
-            </ul>
-            These narratives bridge the gap between technical model outputs and clinical reasoning, making AI predictions more accessible to clinicians.</li>
-            
-            <li><strong>Q: What visualization libraries did you use and why?</strong><br>
-            <strong>A:</strong> I used multiple visualization libraries for different purposes:
-            <ul>
-              <li><strong>Plotly</strong>: Interactive charts for dashboard (risk trajectories, ROC/PR curves, feature importance) - provides zoom, pan, hover tooltips</li>
-              <li><strong>Matplotlib</strong>: Static plots for training curves and performance metrics - lightweight and publication-ready</li>
-              <li><strong>Seaborn</strong>: Statistical visualizations (confusion matrices, distribution plots) - built on Matplotlib with better defaults</li>
-              <li><strong>SHAP</strong>: Built-in visualization for SHAP values (waterfall plots, summary plots, bar plots)</li>
-            </ul>
-            Plotly provides interactivity for exploration, while Matplotlib/Seaborn provide static plots for documentation. The combination enables both interactive exploration and static reporting.</li>
-            
-            <li><strong>Q: How did you implement the fairness analysis feature?</strong><br>
-            <strong>A:</strong> I implemented fairness analysis in the "Fairness" tab:
-            <ul>
-              <li><strong>Subgroup definition</strong>: Groups patients by age (e.g., <65, ≥65) and gender (Male, Female)</li>
-              <li><strong>Performance metrics</strong>: Computes AUROC, AUPRC, Precision, Recall, F1 for each subgroup</li>
-              <li><strong>Disparity detection</strong>: Identifies performance gaps between subgroups</li>
-              <li><strong>Visualization</strong>: Bar charts and tables comparing subgroup performance</li>
-              <li><strong>Bias monitoring</strong>: Encourages regular review to ensure equitable performance</li>
-            </ul>
-            This feature helps identify potential biases in model predictions and ensures equitable performance across demographic groups, which is crucial for clinical AI systems.</li>
-            
-            <li><strong>Q: How did you handle real-time predictions and performance optimization?</strong><br>
-            <strong>A:</strong> I implemented several optimization strategies:
-            <ul>
-              <li><strong>Caching</strong>: Used <code>@st.cache_resource</code> for model loading and <code>@st.cache_data</code> for data loading</li>
-              <li><strong>Async API</strong>: FastAPI uses async/await and thread pool executor for non-blocking predictions</li>
-              <li><strong>Background tasks</strong>: Logging and non-critical operations run as background tasks</li>
-              <li><strong>Batch prediction</strong>: <code>POST /predict/batch</code> endpoint for efficient batch processing</li>
-              <li><strong>Explainability optimization</strong>: Limited background samples for SHAP (100-500) and cached preprocessed arrays</li>
-              <li><strong>Docker optimization</strong>: Multi-stage builds to reduce image size and startup time</li>
-            </ul>
-            These optimizations ensure the system can handle real-time predictions efficiently while maintaining responsiveness.</li>
-            
-            <li><strong>Q: How did you ensure the dashboard is user-friendly for clinicians?</strong><br>
-            <strong>A:</strong> I implemented several UX improvements:
-            <ul>
-              <li><strong>Clear navigation</strong>: Tab-based interface with descriptive names (Risk Overview, Model Predictions, etc.)</li>
-              <li><strong>Clinical terminology</strong>: Used clinical terms (e.g., "Heart Rate" instead of "HR", "Mean Arterial Pressure" instead of "MAP")</li>
-              <li><strong>Risk levels</strong>: Color-coded risk levels (Low/Medium/High) with intuitive colors (green/yellow/red)</li>
-              <li><strong>Actionable recommendations</strong>: Clear, concise recommendations (e.g., "Close monitoring recommended")</li>
-              <li><strong>Threshold tuning</strong>: Interactive sliders with live sensitivity/specificity feedback</li>
-              <li><strong>Export capabilities</strong>: CSV/JSON export for reporting and documentation</li>
-              <li><strong>Help text</strong>: Tooltips and explanations for technical concepts</li>
-            </ul>
-            The dashboard is designed to be intuitive for clinicians with minimal technical training, focusing on actionable insights rather than technical details.</li>
-            
-            <li><strong>Q: How are your explainability and dashboard components deployed in production?</strong><br>
-            <strong>A:</strong> The components are deployed through:
-            <ul>
-              <li><strong>Docker containers</strong>: Multi-stage Dockerfile with separate targets for API and dashboard</li>
-              <li><strong>Docker Compose</strong>: <code>docker-compose.yml</code> orchestrates API and dashboard services with proper networking</li>
-              <li><strong>API service</strong>: FastAPI service runs on port 8000 with health checks and logging</li>
-              <li><strong>Dashboard service</strong>: Streamlit dashboard runs on port 8501 with caching and optimization</li>
-              <li><strong>Model loading</strong>: Models loaded from <code>outputs/models/</code> at startup for fast inference</li>
-              <li><strong>Environment variables</strong>: Configuration via <code>.env</code> file for different deployment scenarios</li>
-            </ul>
-            The system can be deployed as a complete stack (API + Dashboard) or as individual services, providing flexibility for different deployment needs. See Section 8: "Deployment Guide" for detailed instructions.</li>
-          </ol>
         </div>
       </details>
     </section>
     <section id="visuals" class="section doc-section">
       <details open>
-        <summary>18) Visual Gallery</summary>
+        <summary>21) Visual Gallery</summary>
         <div class="content">
           <h3>System Architecture (SVG)</h3>
           <svg width="820" height="220" role="img" aria-label="System Architecture" style="max-width:100%;height:auto;border:1px solid #1f2937;background:#0b1220;border-radius:8px">
