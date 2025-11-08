@@ -32,7 +32,17 @@ def evaluate_model_accuracy(model, data_loader, device: str = 'cpu') -> float:
 
 
 def main():
-    data_path = 'Dataset.csv'
+    # Try multiple possible paths for the dataset
+    dataset_paths = ['Dataset.csv', 'Capstone/Dataset.csv']
+    data_path = None
+    for path in dataset_paths:
+        if os.path.exists(path):
+            data_path = path
+            break
+    
+    if data_path is None:
+        raise FileNotFoundError(f"Dataset.csv not found. Tried paths: {', '.join(dataset_paths)}")
+    
     data, feature_cols = load_preprocessed_data(data_path)
     train_data, val_data, test_data = get_train_val_test_split(data, train_ratio=0.7, val_ratio=0.15)
     _, _, test_loader = create_data_loaders(

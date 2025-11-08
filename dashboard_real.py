@@ -66,17 +66,27 @@ st.markdown("""
 @st.cache_data
 def load_real_data():
     """Load real ICU data from Person A"""
-    try:
-        # Load the real dataset
-        df = pd.read_csv('Dataset.csv')
-        print(f"✅ Loaded real data: {df.shape[0]} records, {df.shape[1]} features")
-        return df
-    except FileNotFoundError:
-        st.error("❌ Dataset.csv not found. Please ensure Person A's data is available.")
-        return None
-    except Exception as e:
-        st.error(f"❌ Error loading data: {e}")
-        return None
+    # Try multiple possible paths for the dataset
+    dataset_paths = [
+        'Dataset.csv',
+        'Capstone/Dataset.csv'
+    ]
+    
+    for path in dataset_paths:
+        if os.path.exists(path):
+            try:
+                # Load the real dataset
+                df = pd.read_csv(path)
+                print(f"✅ Loaded real data from {path}: {df.shape[0]} records, {df.shape[1]} features")
+                return df
+            except Exception as e:
+                print(f"⚠️ Error loading {path}: {e}, trying next path...")
+                continue
+    
+    # If none of the paths worked
+    st.error("❌ Dataset.csv not found. Please ensure Person A's data is available.")
+    st.info("💡 Tried paths: " + ", ".join(dataset_paths))
+    return None
 
 def generate_patient_data(df, patient_id):
     """Generate realistic patient data from the real dataset"""
@@ -104,7 +114,12 @@ def generate_patient_data(df, patient_id):
     # Generate model predictions (integration baseline + DL when available)
     model_predictions = {}
     try:
+        os.environ['DISABLE_BASELINES'] = '0'
         system = get_integration_system()
+        try:
+            system.disable_baseline_models = False
+        except Exception:
+            pass
         # Use dict for compatibility
         latest_dict = latest_record.to_dict()
         baseline_preds = system.predict_baseline_models(latest_dict)
@@ -120,8 +135,14 @@ def generate_patient_data(df, patient_id):
     if not model_predictions:
         model_predictions = generate_model_predictions(latest_record)
     
+    # Filter out 'clinical_scores' for ensemble calculation (only use actual model predictions)
+    model_preds_only = {
+        k: v for k, v in model_predictions.items() 
+        if isinstance(v, dict) and 'risk_score' in v
+    }
+    
     # Calculate ensemble prediction
-    ensemble_score = np.mean([pred['risk_score'] for pred in model_predictions.values()])
+    ensemble_score = np.mean([pred['risk_score'] for pred in model_preds_only.values()]) if model_preds_only else 0.5
     ensemble_level = 'High' if ensemble_score > 0.7 else 'Medium' if ensemble_score > 0.3 else 'Low'
     
     return {
@@ -625,10 +646,43 @@ def show_model_predictions(risk_data):
     
     predictions = risk_data['model_predictions']
     
+    # Filter out 'clinical_scores' which is not a model prediction
+    # Only include entries that have 'risk_score' key (actual model predictions)
+    model_predictions = {
+        k: v for k, v in predictions.items() 
+        if isinstance(v, dict) and 'risk_score' in v
+    }
+    
+    if not model_predictions:
+        st.warning("⚠️ No model predictions available. Please check that models are loaded correctly.")
+        return
+    
+    # Debug/validation: ensure baseline models are included
+    expected_baselines = ['logistic_regression', 'random_forest', 'xgboost']
+    present_models = set(model_predictions.keys())
+    missing_baselines = [m for m in expected_baselines if m not in present_models]
+    if missing_baselines:
+        st.info(f"ℹ️ Baseline models not present in predictions: {', '.join(missing_baselines)}")
+        try:
+            # Inspect integration system state
+            os.environ['DISABLE_BASELINES'] = '0'
+            system = get_integration_system()
+            try:
+                system.disable_baseline_models = False
+            except Exception:
+                pass
+            loaded = list(getattr(system, 'baseline_models', {}).keys())
+            if loaded:
+                st.caption(f"Loaded baseline artifacts: {', '.join(loaded)}")
+            else:
+                st.caption("No baseline artifacts loaded. Ensure models exist in outputs/models/*.pkl")
+        except Exception:
+            pass
+    
     # Create comparison chart
-    models = list(predictions.keys())
-    scores = [predictions[model]['risk_score'] for model in models]
-    confidences = [predictions[model].get('confidence', 0.75) for model in models]
+    models = list(model_predictions.keys())
+    scores = [model_predictions[model]['risk_score'] for model in models]
+    confidences = [model_predictions[model].get('confidence', 0.75) for model in models]
     
     # Model comparison chart
     fig = go.Figure()
@@ -662,7 +716,7 @@ def show_model_predictions(risk_data):
     
     # Model details with confidence intervals
     st.subheader("Detailed Model Results")
-    for model, pred in predictions.items():
+    for model, pred in model_predictions.items():
         col1, col2, col3, col4 = st.columns(4)
         
         # Add confidence interval
@@ -687,9 +741,9 @@ def show_model_predictions(risk_data):
     st.subheader("Model Uncertainty Analysis")
     
     # Create uncertainty plot
-    models = list(predictions.keys())
-    scores = [predictions[model]['risk_score'] for model in models]
-    confidences = [predictions[model]['confidence'] for model in models]
+    models = list(model_predictions.keys())
+    scores = [model_predictions[model]['risk_score'] for model in models]
+    confidences = [model_predictions[model]['confidence'] for model in models]
     
     fig_uncertainty = go.Figure()
     
@@ -953,11 +1007,59 @@ def show_patient_data(patient_data):
     with col3:
         st.metric("SOFA Score", scores['sofa_score'])
 
+def _load_baseline_metrics():
+    """Load baseline model metrics from JSON file"""
+    import json
+    baseline_paths = [
+        os.path.join(project_root, 'outputs', 'models', 'baseline_models_metrics.json'),
+        'outputs/models/baseline_models_metrics.json',
+        os.path.join(project_root, 'baseline_models_metrics.json')
+    ]
+    
+    for path in baseline_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    baseline_data = json.load(f)
+                
+                # Convert to DataFrame format
+                rows = []
+                model_name_map = {
+                    'logistic_regression': 'Logistic Regression',
+                    'random_forest': 'Random Forest',
+                    'xgboost': 'XGBoost'
+                }
+                
+                for key, metrics in baseline_data.items():
+                    model_name = model_name_map.get(key, key.replace('_', ' ').title())
+                    rows.append({
+                        'Model': model_name,
+                        'AUROC': metrics.get('auroc', None),
+                        'AUPRC': metrics.get('auprc', None),
+                        'Sensitivity': metrics.get('sensitivity', None),
+                        'Specificity': metrics.get('specificity', None),
+                        'Precision': metrics.get('precision', None),
+                        'Recall': metrics.get('sensitivity', None),  # Recall = Sensitivity
+                        'F1-Score': metrics.get('f1', None),
+                        'Brier Score': metrics.get('brier', None),
+                        'Optimal Threshold': metrics.get('optimal_threshold', None)
+                    })
+                
+                if rows:
+                    return pd.DataFrame(rows)
+            except Exception as e:
+                print(f"⚠️ Error loading baseline metrics from {path}: {e}")
+    
+    return None
+
 def show_performance_metrics():
     """Display model performance metrics"""
     st.header("📊 Model Performance Metrics")
     
-    # Try to load real comparison metrics if available
+    # Load baseline model metrics
+    df_baseline = _load_baseline_metrics()
+    
+    # Try to load deep learning model comparison metrics if available
     possible_paths = [
         os.path.join(project_root, 'outputs', 'results', 'model_comparison.csv'),
         os.path.join(project_root, 'Capstone', 'outputs', 'results', 'model_comparison.csv')
@@ -993,10 +1095,27 @@ def show_performance_metrics():
             cols_pref = ['Model', 'AUROC', 'AUPRC', 'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1-Score', 'Sensitivity@80%Spec',
                          'Accuracy@R85', 'Precision@R85', 'Recall@R85', 'Specificity@R85', 'F1-Score@R85', 'Threshold@R85']
             present_cols = [c for c in cols_pref if c in df_raw.columns]
-            df_metrics = df_raw[present_cols].copy()
+            df_dl_metrics = df_raw[present_cols].copy()
             
-            st.subheader("Model Performance Comparison (latest evaluation)")
-            st.caption(f"Loaded from: {os.path.relpath(csv_path, project_root)}")
+            # Merge with baseline metrics if available
+            if df_baseline is not None:
+                # Align columns - keep all columns from both dataframes
+                all_cols = set(df_dl_metrics.columns) | set(df_baseline.columns)
+                for col in all_cols:
+                    if col not in df_dl_metrics.columns:
+                        df_dl_metrics[col] = None
+                    if col not in df_baseline.columns:
+                        df_baseline[col] = None
+                
+                # Combine dataframes
+                df_metrics = pd.concat([df_baseline, df_dl_metrics], ignore_index=True)
+                st.subheader("Model Performance Comparison (Baseline + Deep Learning Models)")
+                st.caption(f"Baseline models from: outputs/models/baseline_models_metrics.json | DL models from: {os.path.relpath(csv_path, project_root)}")
+            else:
+                df_metrics = df_dl_metrics
+                st.subheader("Model Performance Comparison (Deep Learning Models)")
+                st.caption(f"Loaded from: {os.path.relpath(csv_path, project_root)}")
+            
             st.dataframe(df_metrics, use_container_width=True)
             
             # Accuracy bar chart if available
@@ -1009,28 +1128,7 @@ def show_performance_metrics():
                 fig_acc.update_layout(xaxis_tickangle=-45)
                 st.plotly_chart(fig_acc, use_container_width=True)
             
-            # AUROC and AUPRC if available
-            col1, col2 = st.columns(2)
-            if 'AUROC' in df_metrics.columns:
-                with col1:
-                    fig_auroc = px.bar(
-                        df_metrics, x='Model', y='AUROC',
-                        title='AUROC Comparison', color='AUROC',
-                        color_continuous_scale='Viridis'
-                    )
-                    fig_auroc.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig_auroc, use_container_width=True)
-            if 'AUPRC' in df_metrics.columns:
-                with col2:
-                    fig_auprc = px.bar(
-                        df_metrics, x='Model', y='AUPRC',
-                        title='AUPRC Comparison', color='AUPRC',
-                        color_continuous_scale='Plasma'
-                    )
-                    fig_auprc.update_layout(xaxis_tickangle=-45)
-                    st.plotly_chart(fig_auprc, use_container_width=True)
-
-            # Metrics at Recall=0.85 if present
+            # Metrics at Recall=0.85 if present (only for DL models)
             if 'Precision@R85' in df_metrics.columns or 'Specificity@R85' in df_metrics.columns:
                 st.subheader("Operating Point: Recall ≈ 0.85")
                 c1, c2 = st.columns(2)
@@ -1053,38 +1151,79 @@ def show_performance_metrics():
                         fig_s_r85.update_layout(xaxis_tickangle=-45)
                         st.plotly_chart(fig_s_r85, use_container_width=True)
             
-            # Summary metrics if present
-            available = set(df_metrics.columns)
-            if {'Model', 'AUROC'} <= available:
-                best_auroc = df_metrics.iloc[df_metrics['AUROC'].idxmax()]
-            else:
-                best_auroc = None
-            if {'Model', 'AUPRC'} <= available:
-                best_auprc = df_metrics.iloc[df_metrics['AUPRC'].idxmax()]
-            else:
-                best_auprc = None
-            if {'Model', 'F1-Score'} <= available:
-                best_f1 = df_metrics.iloc[df_metrics['F1-Score'].idxmax()]
-            else:
-                best_f1 = None
-            
-            st.subheader("Performance Summary")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if best_auroc is not None:
-                    st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
-            with col2:
-                if best_auprc is not None:
-                    st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
-            with col3:
-                if best_f1 is not None:
-                    st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
+            # Show visualizations (includes summary metrics)
+            _show_metrics_visualizations(df_metrics)
         except Exception as e:
-            st.warning(f"Failed to load real metrics ({e}). Showing demo metrics.")
-            _show_demo_metrics()
+            st.warning(f"Failed to load deep learning metrics ({e}).")
+            # Still try to show baseline metrics if available
+            if df_baseline is not None:
+                st.subheader("Baseline Model Performance")
+                st.caption("Loaded from: outputs/models/baseline_models_metrics.json")
+                st.dataframe(df_baseline, use_container_width=True)
+                _show_metrics_visualizations(df_baseline)
+            else:
+                st.info("Showing demo metrics.")
+                _show_demo_metrics()
     else:
-        st.info("No saved evaluation found at outputs/results/model_comparison.csv. Showing demo metrics.")
-        _show_demo_metrics()
+        # No DL metrics CSV, but check for baseline metrics
+        if df_baseline is not None:
+            st.subheader("Baseline Model Performance")
+            st.caption("Loaded from: outputs/models/baseline_models_metrics.json")
+            st.dataframe(df_baseline, use_container_width=True)
+            _show_metrics_visualizations(df_baseline)
+        else:
+            st.info("No saved evaluation found. Showing demo metrics.")
+            _show_demo_metrics()
+
+def _show_metrics_visualizations(df_metrics):
+    """Helper function to show visualizations for metrics dataframe"""
+    # AUROC and AUPRC if available
+    col1, col2 = st.columns(2)
+    if 'AUROC' in df_metrics.columns:
+        with col1:
+            fig_auroc = px.bar(
+                df_metrics, x='Model', y='AUROC',
+                title='AUROC Comparison', color='AUROC',
+                color_continuous_scale='Viridis'
+            )
+            fig_auroc.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_auroc, use_container_width=True)
+    if 'AUPRC' in df_metrics.columns:
+        with col2:
+            fig_auprc = px.bar(
+                df_metrics, x='Model', y='AUPRC',
+                title='AUPRC Comparison', color='AUPRC',
+                color_continuous_scale='Plasma'
+            )
+            fig_auprc.update_layout(xaxis_tickangle=-45)
+            st.plotly_chart(fig_auprc, use_container_width=True)
+    
+    # Summary metrics if present
+    available = set(df_metrics.columns)
+    if {'Model', 'AUROC'} <= available:
+        best_auroc = df_metrics.iloc[df_metrics['AUROC'].idxmax()]
+    else:
+        best_auroc = None
+    if {'Model', 'AUPRC'} <= available:
+        best_auprc = df_metrics.iloc[df_metrics['AUPRC'].idxmax()]
+    else:
+        best_auprc = None
+    if {'Model', 'F1-Score'} <= available:
+        best_f1 = df_metrics.iloc[df_metrics['F1-Score'].idxmax()]
+    else:
+        best_f1 = None
+    
+    st.subheader("Performance Summary")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if best_auroc is not None:
+            st.metric("Best AUROC", f"{best_auroc['AUROC']:.3f}", f"{best_auroc['Model']}")
+    with col2:
+        if best_auprc is not None:
+            st.metric("Best AUPRC", f"{best_auprc['AUPRC']:.3f}", f"{best_auprc['Model']}")
+    with col3:
+        if best_f1 is not None:
+            st.metric("Best F1-Score", f"{best_f1['F1-Score']:.3f}", f"{best_f1['Model']}")
 
 def _show_demo_metrics():
     # Performance data (placeholder)
@@ -1551,6 +1690,7 @@ def generate_patient_data_from_dict(patient_dict):
         # Generate model predictions using integration (baseline + DL). Fallbacks preserved.
         model_predictions = {}
         try:
+            os.environ['DISABLE_BASELINES'] = '0'
             system = get_integration_system()
             baseline_preds = system.predict_baseline_models(patient_dict)
             dl_preds = system.predict_deep_learning_models(patient_dict)
@@ -1568,8 +1708,14 @@ def generate_patient_data_from_dict(patient_dict):
                 print(f"Classical model prediction failed: {e2}")
                 model_predictions = generate_simplified_predictions(patient_dict)
         
+        # Filter out 'clinical_scores' for ensemble calculation (only use actual model predictions)
+        model_preds_only = {
+            k: v for k, v in model_predictions.items() 
+            if isinstance(v, dict) and 'risk_score' in v
+        }
+        
         # Calculate ensemble prediction
-        risk_scores = [pred.get('risk_score', 0.3) for pred in model_predictions.values()]
+        risk_scores = [pred.get('risk_score', 0.3) for pred in model_preds_only.values()]
         ensemble_score = np.mean(risk_scores) if risk_scores else clinical_risk['risk_score']
         
         # Use the maximum of clinical risk and model risk for conservative approach
@@ -1710,10 +1856,7 @@ def generate_real_model_predictions(patient_dict):
             'grud': {'risk_score': risk_score, 'risk_level': risk_level, 'confidence': 0.85},
             'lstm': {'risk_score': risk_score * 0.95, 'risk_level': risk_level, 'confidence': 0.82},
             'cnn_lstm': {'risk_score': risk_score * 1.05, 'risk_level': risk_level, 'confidence': 0.88},
-            'transformer': {'risk_score': risk_score * 0.98, 'risk_level': risk_level, 'confidence': 0.80},
-            'logistic_regression': {'risk_score': risk_score * 0.92, 'risk_level': risk_level, 'confidence': 0.75},
-            'random_forest': {'risk_score': risk_score * 1.02, 'risk_level': risk_level, 'confidence': 0.90},
-            'xgboost': {'risk_score': risk_score, 'risk_level': risk_level, 'confidence': 0.87}
+            'transformer': {'risk_score': risk_score * 0.98, 'risk_level': risk_level, 'confidence': 0.80}
         }
         
         return model_predictions
@@ -1733,10 +1876,7 @@ def generate_simplified_predictions(patient_dict):
         'grud': {'risk_score': base_risk, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.8},
         'lstm': {'risk_score': base_risk * 0.95, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.75},
         'cnn_lstm': {'risk_score': base_risk * 1.05, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.82},
-        'transformer': {'risk_score': base_risk * 0.98, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.78},
-        'logistic_regression': {'risk_score': base_risk * 0.92, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.70},
-        'random_forest': {'risk_score': base_risk * 1.02, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.85},
-        'xgboost': {'risk_score': base_risk, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.80}
+        'transformer': {'risk_score': base_risk * 0.98, 'risk_level': clinical_risk['risk_level'], 'confidence': 0.78}
     }
     
     return model_predictions
@@ -1823,7 +1963,12 @@ def _build_sequence(patient_dict, feature_cols, input_size, seq_len):
 def generate_dl_model_predictions(patient_dict):
     """Generate predictions using integration_real's deep learning models."""
     try:
+        os.environ['DISABLE_BASELINES'] = '0'
         system = get_integration_system()
+        try:
+            system.disable_baseline_models = False
+        except Exception:
+            pass
         preds = system.predict_deep_learning_models(patient_dict)
         return preds
     except Exception as e:

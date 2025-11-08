@@ -21,16 +21,26 @@ sys.path.append(project_root)
 
 def load_real_data():
     """Load real ICU data from Person A"""
-    try:
-        df = pd.read_csv('Dataset.csv')
-        print(f"✅ Loaded real data: {df.shape[0]} records, {df.shape[1]} features")
-        return df
-    except FileNotFoundError:
-        print("❌ Dataset.csv not found. Using sample data.")
-        return None
-    except Exception as e:
-        print(f"❌ Error loading data: {e}")
-        return None
+    # Try multiple possible paths for the dataset
+    dataset_paths = [
+        'Dataset.csv',
+        'Capstone/Dataset.csv'
+    ]
+    
+    for path in dataset_paths:
+        if os.path.exists(path):
+            try:
+                df = pd.read_csv(path)
+                print(f"✅ Loaded real data from {path}: {df.shape[0]} records, {df.shape[1]} features")
+                return df
+            except Exception as e:
+                print(f"⚠️ Error loading {path}: {e}, trying next path...")
+                continue
+    
+    # If none of the paths worked
+    print("❌ Dataset.csv not found. Using sample data.")
+    print(f"💡 Tried paths: {', '.join(dataset_paths)}")
+    return None
 
 def create_sample_patients():
     """Create sample patients with different risk profiles"""
